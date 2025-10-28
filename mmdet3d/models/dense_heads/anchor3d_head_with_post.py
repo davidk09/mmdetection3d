@@ -73,11 +73,45 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         return cls_scores, bbox_preds, dir_cls_preds, pp_params 
 
 
+    # ---------- DEBUG HELPERS ----------
+    @staticmethod
+    def _shape_list(tlist):
+        if tlist is None:
+            return None
+        return [tuple(t.shape) if t is not None else None for t in tlist]
 
+    def _log_received(self, where, outs, batch_data_samples):
+        logger = MMLogger.get_current_instance()
+        msg = f"[{where}] outs type={type(outs)}"
+        if isinstance(outs, (tuple, list)):
+            msg += f", len={len(outs)}"
+        logger.info(msg)
+        if isinstance(outs, (tuple, list)) and len(outs) >= 1:
+            logger.info(f"[{where}] outs[0] type={type(outs[0])} "
+                        f"(if tuple/list expect 3 tensors lists)")
+        # try to peek shapes if it looks like the triple
+        try:
+            cls_scores, bbox_preds, dir_cls_preds = outs
+            logger.info(f"[{where}] cls_scores shapes: {self._shape_list(cls_scores)}")
+            logger.info(f"[{where}] bbox_preds  shapes: {self._shape_list(bbox_preds)}")
+            logger.info(f"[{where}] dir_cls_preds shapes: {self._shape_list(dir_cls_preds)}")
+        except Exception:
+            pass
+        logger.info(f"[{where}] batch_data_samples type={type(batch_data_samples)}")
+
+        
 
         # training: decode + post, then delegate to base loss
-    def loss(self, cls_scores, bbox_preds, dir_cls_preds, *, batch_data_samples, **kwargs):
+    def loss(self, outs, batch_data_samples, **kwargs):
+            self._log_received("loss()", outs, batch_data_samples)
             
+            if isinstance(outs, (tuple, list)) and len(outs) == 1 and isinstance(outs[0], (tuple, list)):
+                outs = outs[0]  # handle extra wrapping
+            if not (isinstance(outs, (tuple, list)) and len(outs) == 3):
+                raise RuntimeError(f"Expected outs=(cls_scores,bbox_preds,dir_cls_preds), got {type(outs)} with len={len(outs) if isinstance(outs,(tuple,list)) else 'n/a'}")
+
+            cls_scores, bbox_preds, dir_cls_preds = outs
+
             # cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples, k = \
             #     self._unwrap_outs(outs)
             
