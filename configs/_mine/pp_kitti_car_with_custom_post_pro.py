@@ -1,4 +1,4 @@
-# configs/my_pp/pointpillars_pp_kitti_car_min.py
+# configs/_mine/pp_kitti_car_with_custom_post_pro.py
 _base_ = '../pointpillars/pointpillars_hv_secfpn_8xb6-160e_kitti-3d-car.py'
 
 custom_imports = dict(
