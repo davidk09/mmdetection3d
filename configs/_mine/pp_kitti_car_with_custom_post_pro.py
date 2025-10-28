@@ -5,7 +5,7 @@ custom_imports = dict(
     imports=[
         'mmdet3d.models.dense_heads.anchor3d_head_with_post',
         'mmdet3d.models.layers.post_processing',
-        'mmdet3d.losses.APLoss',
+        'mmdet3d.models.losses.APLoss',
     ],
     allow_failed_imports=False,
 )
