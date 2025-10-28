@@ -24,8 +24,9 @@ class MyPostHead(nn.Module):
 
     # [B, C*3, H, W] -> [B, H, W, C, 3]
     @staticmethod
-    def flatten_pp(pp, B, C, H, W):
-        return pp.view(B, C, 3, H, W).permute(0, 3, 4, 1, 2)
+    def flatten_pp(pp, B, A, C, H, W):
+        # [B, A*C*3, H, W] -> [B, H, W, A, C, 3] -> [B, N, C, 3]
+        return pp.view(B, A, C, 3, H, W).permute(0, 4, 5, 1, 2, 3).reshape(B, H * W * A, C, 3)
 
     # per-class update (your formula)
     @staticmethod
@@ -46,9 +47,7 @@ class MyPostHead(nn.Module):
         batched_bbox_preds:   List[torch.Tensor],  # per level: [B, A*box_dim, H, W]
         dir_cls:              Optional[List[torch.Tensor]],
         batched_pp_params:    Optional[List[torch.Tensor]],  # per level: [B, C*3, H, W]
-        anchors:              List[torch.Tensor],            # unused here
         batched_decoded:      List[torch.Tensor],            # per level: [B, H*W*A, 7(+...)]
-        metas:                List[dict],
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor],
                Optional[List[torch.Tensor]], Optional[List[torch.Tensor]]]:
 
@@ -68,10 +67,7 @@ class MyPostHead(nn.Module):
             assert B2 == B
             level_sizes.append((H, W))
             sc_f = self.flatten_scores(sc, B, A, C, H, W)            # [B, Nl, C]
-            pp_hw_c3 = self.flatten_pp(pp, B, C, H, W)               # [B, H, W, C, 3]
-            # broadcast pp over anchors: [B, H, W, A, C, 3] -> [B, Nl, C, 3]
-            pp_hw_ac3 = pp_hw_c3.unsqueeze(3).expand(B, H, W, A, C, 3)
-            pp_f = pp_hw_ac3.reshape(B, H * W * A, C, 3)
+            pp_f = self.flatten_pp(pp, B, A, C, H, W)   # already [B, Nl, C, 3]
             flat_scores.append(sc_f)
             flat_pp.append(pp_f)
 

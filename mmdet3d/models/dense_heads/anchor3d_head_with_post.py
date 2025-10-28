@@ -5,11 +5,12 @@ from mmdet3d.registry import MODELS
 
 @MODELS.register_module()
 class Anchor3DHeadWithPostPP(Anchor3DHead):
-    def __init__(self, post=None, **kwargs):
+    def __init__(self, post=None, loss_post=None, **kwargs):
         super().__init__(**kwargs)
         # add 3 params per class
         self.conv_pp = nn.Conv2d(self.feat_channels, self.num_anchors * self.num_classes * 3, 1)
         self.post = MODELS.build(post) if post else None
+        self.loss_post = MODELS.build(loss_post) if loss_post else None
 
     def init_weights(self):
         super().init_weights()
@@ -38,21 +39,31 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
     def loss(self, *outs, batch_data_samples, **kwargs):
         cls_scores, bbox_preds, dir_cls_preds, pp_params = outs
 
-        if self.post is not None:
-            featmap_sizes = [t.shape[-2:] for t in cls_scores]
-            device = cls_scores[0].device
-            anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
-            flat_bbox = [self._flat(b) for b in bbox_preds]
-            decoded   = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
-            cls_scores, bbox_preds, dir_cls_preds, pp_params = self.post(
-                cls_scores, bbox_preds, dir_cls_preds, pp_params,
-                anchors, decoded, [s.metainfo for s in batch_data_samples]
-            )
-
-        return super().loss(
+        base_loss = super().loss(
             cls_scores, bbox_preds, dir_cls_preds,
             batch_data_samples=batch_data_samples, **kwargs
         )
+
+
+        featmap_sizes = [t.shape[-2:] for t in cls_scores]
+        device = cls_scores[0].device
+        anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
+        flat_bbox = [self._flat(b) for b in bbox_preds]
+        decoded   = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
+        cls_scores, bbox_preds, dir_cls_preds, pp_params = self.post(
+            cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
+        )
+
+        post_loss = self.loss_post(
+            cls_scores, bbox_preds
+        )
+
+        if isinstance(post_loss, dict):
+            base_loss.update(post_loss)                 # expects e.g. {"loss_post": tensor}
+        else:
+            base_loss['loss_post'] = post_loss          # tensor -> keyed
+
+        return base_loss
 
     # inference: same post, then delegate to base predict
     def predict_by_feat(self, *outs, batch_data_samples=None, **kwargs):
@@ -65,8 +76,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             flat_bbox = [self._flat(b) for b in bbox_preds]
             decoded   = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
             cls_scores, bbox_preds, dir_cls_preds, pp_params = self.post(
-                cls_scores, bbox_preds, dir_cls_preds, pp_params,
-                anchors, decoded, [s.metainfo for s in batch_data_samples]
+                cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
             )
 
         return super().predict_by_feat(
