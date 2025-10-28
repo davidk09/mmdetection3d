@@ -36,8 +36,8 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         return x.permute(0, 2, 3, 1).reshape(x.size(0), -1, x.size(1))
 
     # training: decode + post, then delegate to base loss
-    def loss(self, *outs, batch_data_samples, **kwargs):
-        cls_scores, bbox_preds, dir_cls_preds, pp_params = outs
+    def loss(self, x, batch_data_samples, **kwargs):
+        cls_scores, bbox_preds, dir_cls_preds, pp_params = self(x)
 
         base_loss = super().loss(
             cls_scores, bbox_preds, dir_cls_preds,
