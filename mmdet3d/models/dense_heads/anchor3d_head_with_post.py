@@ -38,64 +38,32 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
     def _flat(self, x):
         return x.permute(0, 2, 3, 1).reshape(x.size(0), -1, x.size(1))
 
-    def _normalize_head_args(self, *args, **kwargs):
-        """
-        Returns:
-        (cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples, rem_kwargs)
-        Supports both:
-        - loss(outs, batch_data_samples, **kwargs)
-        - loss(cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples=..., **kwargs)
-        Also handles predict_by_feat variants.
-        """
-        k = dict(kwargs)  # copy
-        bds = k.pop('batch_data_samples', None)
+    def _unwrap_outs(self, outs):
+        """Return (cls_scores, bbox_preds, dir_cls_preds, pp_params or None)."""
+        # handle extra one-tuple wrapping
+        if isinstance(outs, (tuple, list)) and len(outs) == 1 and isinstance(outs[0], (tuple, list)):
+            outs = outs[0]
 
-        if len(args) == 0:
-            raise RuntimeError("Head called without positional outputs.")
+        if not isinstance(outs, (tuple, list)):
+            raise TypeError(f"Head outs must be tuple/list, got {type(outs)}")
 
-        case_tag = None
-
-        # Case A: first positional is the tuple/list of 4 tensors (outs)
-        if len(args) == 1 and isinstance(args[0], (tuple, list)):
-            cls_scores, bbox_preds, dir_cls_preds, pp_params = args[0]
-            case_tag = "A:outs_only"
-
-        # Case A': (outs, batch_data_samples) positional
-        elif len(args) == 2 and isinstance(args[0], (tuple, list)):
-            cls_scores, bbox_preds, dir_cls_preds, pp_params = args[0]
-            bds = args[1] if bds is None else bds
-            case_tag = "Aprim:outs_plus_bds_pos"
-
-        # Case B: expanded positionals: (cls_scores, bbox_preds, dir_cls_preds, pp_params [, bds])
-        elif len(args) >= 4:
-            cls_scores, bbox_preds, dir_cls_preds, pp_params = args[:4]
-            if bds is None and len(args) >= 5:
-                bds = args[4]
-                case_tag = "B:expanded_with_bds_pos"
-            else:
-                case_tag = "B:expanded_kw"
-
+        if len(outs) == 4:
+            cls_scores, bbox_preds, dir_cls_preds, pp_params = outs
+        elif len(outs) == 3:
+            cls_scores, bbox_preds, dir_cls_preds = outs
+            pp_params = None
         else:
-            raise RuntimeError(f"Unexpected head call signature. Got {len(args)} positional args.")
+            raise ValueError(f"Unexpected outs length {len(outs)} (expected 3 or 4)")
 
-        # Log which path we took (DEBUG by default; INFO if env var set)
-        logger = MMLogger.get_current_instance()
-        if os.getenv("HEAD_ARG_TRACE", "0") == "1":
-            logger.info(f"[Anchor3DHeadWithPostPP] _normalize_head_args -> {case_tag}")
-        else:
-            logger.debug(f"[Anchor3DHeadWithPostPP] _normalize_head_args -> {case_tag}")
-
-        # Guard: batch_data_samples must be present for training loss()
-        # (predict_by_feat may pass None legitimately)
-        return cls_scores, bbox_preds, dir_cls_preds, pp_params, bds, k
+        return cls_scores, bbox_preds, dir_cls_preds, pp_params 
 
 
 
 
         # training: decode + post, then delegate to base loss
-    def loss(self, *args, **kwargs):
+    def loss(self, outs, batch_data_samples, **kwargs):
             cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples, k = \
-                self._normalize_head_args(*args, **kwargs)
+                self._unwrap_outs(outs)
             
 
 
