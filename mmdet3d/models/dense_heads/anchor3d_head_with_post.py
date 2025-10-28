@@ -44,7 +44,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
          *,
          batch_data_samples,
          **kwargs):
-        cls_scores, bbox_preds, dir_cls_preds, pp_params = x
+        #cls_scores, bbox_preds, dir_cls_preds, pp_params = x
 
         kwargs.pop('batch_data_samples', None)
 
