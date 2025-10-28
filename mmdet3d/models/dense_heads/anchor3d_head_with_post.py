@@ -14,6 +14,8 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         self.conv_pp = nn.Conv2d(self.feat_channels, self.num_anchors * self.num_classes * 3, 1)
         self.post = MODELS.build(post) if post else None
         self.loss_post = MODELS.build(loss_post) if loss_post else None
+        self._last_pp_params = None
+
 
     def init_weights(self):
         super().init_weights()
@@ -29,10 +31,23 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         return cls_score, bbox_pred, dir_cls_pred, pp_params
 
     # multi-level
+    # def forward(self, feats):
+    #     outs = [self.forward_single(f) for f in feats]
+    #     cls_scores, bbox_preds, dir_cls_preds, pp_params = zip(*outs)
+    #     return list(cls_scores), list(bbox_preds), list(dir_cls_preds), list(pp_params)
+    
+
     def forward(self, feats):
-        outs = [self.forward_single(f) for f in feats]
-        cls_scores, bbox_preds, dir_cls_preds, pp_params = zip(*outs)
-        return list(cls_scores), list(bbox_preds), list(dir_cls_preds), list(pp_params)
+        cls_scores, bbox_preds, dir_cls_preds, pp_params = [], [], [], []
+        for f in feats:
+            cs, bp, dp, pp = self._forward_single(f)
+            cls_scores.append(cs)
+            bbox_preds.append(bp)
+            dir_cls_preds.append(dp)
+            pp_params.append(pp)
+        self._last_pp_params = pp_params
+        # IMPORTANT: keep stock signature (no pp in outputs)
+        return cls_scores, bbox_preds, dir_cls_preds
 
     # helper: (B,C,H,W)->(B,HW,C)
     def _flat(self, x):
@@ -61,10 +76,10 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
 
         # training: decode + post, then delegate to base loss
-    def loss(self, *outs, batch_data_samples, **kwargs):
-            print(type(outs), len(outs))
-            cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples, k = \
-                self._unwrap_outs(outs)
+    def loss(self, cls_scores, bbox_preds, dir_cls_preds, *, batch_data_samples, **kwargs):
+            
+            # cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples, k = \
+            #     self._unwrap_outs(outs)
             
 
 
