@@ -61,7 +61,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
 
         # training: decode + post, then delegate to base loss
-    def loss(self, outs, batch_data_samples, **kwargs):
+    def loss(self, *outs, batch_data_samples, **kwargs):
             print(type(outs), len(outs))
             cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples, k = \
                 self._unwrap_outs(outs)
