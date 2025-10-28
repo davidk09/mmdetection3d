@@ -1,0 +1,14 @@
+repo is exactly copied from https://github.com/open-mmlab/mmdetection3d
+
+changes are in these files:
+
+mmdetection3d/mmdet3d/configs/_mine/p_kitti_car_with_custom_post_pro.py
+
+mmdetection3d/mmdet3d/models/dense_heads/anchor3d_head_with_post.py
+
+mmdetection3d/mmdet3d/models/layers/post_processing.py
+
+mmdetection3d/mmdet3d/models/losses/APLoss.py
+
+
+

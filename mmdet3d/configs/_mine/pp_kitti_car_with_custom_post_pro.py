@@ -12,10 +12,10 @@ custom_imports = dict(
 
 model = dict(
     bbox_head=dict(
-        _delete_=True,
-        type='Anchor3DHeadWithPostPP',
-        # keep num_classes from base (1) and all other head args from base
+        # NOTE: no _delete_=True
+        type='Anchor3DHeadWithPostPP',     # swap the class
         post=dict(type='MyPostHead', nms_pre=2048),
         loss_post=dict(type='MyPostLoss', weight=0.1),
+        # keep everything else (anchor_generator, bbox_coder, losses, channels, num_classes) from base
     )
 )
