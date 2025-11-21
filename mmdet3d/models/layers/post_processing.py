@@ -44,50 +44,65 @@ class MyPostHead(nn.Module):
         box_dim = batched_bbox_preds[0].size(1) // A  # not used below
 
         # flatten each level
-        level_rescores = []
-        level_reboxes = []
+        batched_rescores = []
+        batched_reboxes = []
 
-        for sc, box, pp in zip(batched_scores,batched_decoded, batched_pp_params):
-            B2, _, H, W = sc.shape
-            #assert B2 == B
-            #level_sizes.append((H, W))
-            batched_rescores = []
-            batched_reboxes = []
+        for b in range(B):
 
-            for b in range(B2):
-                sc_flat = sc[b].view(A,C,H,W).permute(2,3,0,1).reshape(H*W*A,C)
-                box_flat = box[b] #.view(A,box_dim,H,W).permute(2,3,0,1).reshape(H*W*A,box_dim)
-                pp_flat = pp[b].view(A,C,3,H,W).permute(3,4,0,1,2).reshape(H*W*A,C,3)
+            cls_rescores = []
+            cls_reboxes = []
+            
+            for c in range(C):
+
+                levels_rescores = []    
+                levels_reboxes = []
+                levels_params = []
+            
+                for sc, box, pp in zip(batched_scores,batched_decoded, batched_pp_params):
+                    _ , _, H, W = sc.shape
+                    #assert B2 == B
+                    #level_sizes.append((H, W))
+
+                    
                 
-                cls_rescores = []
-                cls_reboxes = []
-                for c in range(C):
+                    sc_flat = sc[b].view(A,C,H,W).permute(2,3,0,1).reshape(H*W*A,C)
+                    box_flat = box[b] #.view(A,box_dim,H,W).permute(2,3,0,1).reshape(H*W*A,box_dim)
+                    pp_flat = pp[b].view(A,C,3,H,W).permute(3,4,0,1,2).reshape(H*W*A,C,3)
+                
                     scores_cls = sc_flat[:,c]
                     boxes_cls = box_flat
                     param_cls = pp_flat[:,c]
 
-                    scores_cls_scored = torch.sigmoid(scores_cls)
+                    levels_rescores.append(scores_cls)
+                    levels_reboxes.append(boxes_cls)
+                    levels_params.append(param_cls)
 
-                    _, topk_idx = torch.topk(scores_cls_scored, k=self.nms_pre)
 
-                    scores_survive = scores_cls[topk_idx]
-                    boxes_survive = boxes_cls[topk_idx]
-                    param_survive = param_cls[topk_idx]
+                rescores_cat = torch.cat(levels_rescores,dim=0)
+                reboxes_cat = torch.cat(levels_reboxes,dim=0)
+                params_cat = torch.cat(levels_params,dim=0)
 
-                    boxes_lidar = LiDARInstance3DBoxes(boxes_survive, box_dim=box_dim)
-                    bev   = boxes_lidar.nearest_bev
-                    iou   = bbox_overlaps(bev, bev, mode='iou', is_aligned=False)  # [N, N]
+                scores_cls_scored = torch.sigmoid(rescores_cat)
 
-                    new_scores = self.forward_feat_class(scores_survive,iou,param_survive)
-                    cls_rescores.append(new_scores)
-                    cls_reboxes.append(boxes_survive)
+                _, topk_idx = torch.topk(scores_cls_scored, k=self.nms_pre)
 
-                batched_rescores.append(cls_rescores)
-                batched_reboxes.append(cls_reboxes)
+                scores_survive = rescores_cat[topk_idx]
+                boxes_survive = reboxes_cat[topk_idx]
+                param_survive = params_cat[topk_idx]
 
-            level_rescores.append(batched_rescores)
-            level_reboxes.append(batched_reboxes)
+                boxes_lidar = LiDARInstance3DBoxes(boxes_survive, box_dim=box_dim)
+                bev   = boxes_lidar.nearest_bev
+                iou   = bbox_overlaps(bev, bev, mode='iou', is_aligned=False)  # [N, N]
 
+                new_scores = self.forward_feat_class(scores_survive,iou,param_survive)
+
+                cls_rescores.append(new_scores)
+                cls_reboxes.append(boxes_survive)
+
+
+
+            batched_rescores.append(cls_rescores)
+            batched_reboxes.append(cls_reboxes)
         
 
-        return level_rescores,level_reboxes
+        return batched_rescores,batched_reboxes

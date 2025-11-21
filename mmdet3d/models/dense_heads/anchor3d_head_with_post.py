@@ -3,6 +3,9 @@ import torch.nn as nn
 from mmdet3d.models.dense_heads.anchor3d_head import Anchor3DHead
 from mmdet3d.registry import MODELS
 
+from mmengine.data import InstanceData
+from mmdet3d.structures.bbox_3d import LiDARInstance3DBoxes
+
 import os
 from mmengine.logging import MMLogger
 
@@ -163,15 +166,45 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             device = cls_scores[0].device
             anchors = self.prior_generator.grid_anchors(
                 featmap_sizes, device=device)
-            flat_bbox = [self._flat(b) for b in bbox_preds]
+            flat_bbox = [b.permute(0, 2, 3, 1)
+               .reshape(b.size(0), -1, self.box_code_size)
+             for b in bbox_preds]
             decoded = [self.bbox_coder.decode(a, fb)
                     for a, fb in zip(anchors, flat_bbox)]
 
-            cls_scores, bbox_preds, dir_cls_preds, pp_params = self.post(
+            batched_scores, batched_boxes = self.post(
                 cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
             )
 
-        return super().predict_by_feat(
-            cls_scores, bbox_preds, dir_cls_preds,
-            batch_data_samples=batch_data_samples, **kwargs
-        )
+            C = len(batched_scores[0])
+
+            final_dicts = []
+
+            for b in range(len(batched_scores)):
+                
+                per_img_scores = []
+                per_img_boxes = []
+                per_img_labels = []
+
+                for c in range(C):
+
+                    batch_cls_score = batched_scores[b][c]
+                    batch_cls_box = batched_boxes[b][c]
+
+                    per_img_scores.append(batch_cls_score)
+                    per_img_boxes.append(batch_cls_box)
+                    per_img_labels.append(torch.full((batch_cls_score.numel(),), c, dtype=torch.long, device=batch_cls_score.device))
+
+
+                scores_3d = torch.cat(per_img_scores, dim=0)
+                boxes_3d  = torch.cat(per_img_boxes,  dim=0)
+                labels_3d = torch.cat(per_img_labels, dim=0)
+
+                inst = InstanceData()
+                inst.bboxes_3d = LiDARInstance3DBoxes(boxes_3d, box_dim=7)
+                inst.scores_3d = scores_3d
+                inst.labels_3d = labels_3d
+                
+                final_dicts.append(inst)
+
+        return final_dicts
