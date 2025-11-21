@@ -30,17 +30,11 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         pp_params = self.conv_pp(x)  # [B, C*3, H, W]
         return cls_score, bbox_pred, dir_cls_pred, pp_params
 
-    # multi-level
-    # def forward(self, feats):
-    #     outs = [self.forward_single(f) for f in feats]
-    #     cls_scores, bbox_preds, dir_cls_preds, pp_params = zip(*outs)
-    #     return list(cls_scores), list(bbox_preds), list(dir_cls_preds), list(pp_params)
-    
 
     def forward(self, feats):
         cls_scores, bbox_preds, dir_cls_preds, pp_params = [], [], [], []
         for f in feats:
-            cs, bp, dp, pp = self._forward_single(f)
+            cs, bp, dp, pp = self.forward_single(f)
             cls_scores.append(cs)
             bbox_preds.append(bp)
             dir_cls_preds.append(dp)
@@ -102,46 +96,40 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         
 
         # training: decode + post, then delegate to base loss
-    def loss(self, outs, batch_data_samples, **kwargs):
-            self._log_received("loss()", outs, batch_data_samples)
-            
-            if isinstance(outs, (tuple, list)) and len(outs) == 1 and isinstance(outs[0], (tuple, list)):
-                outs = outs[0]  # handle extra wrapping
-            if not (isinstance(outs, (tuple, list)) and len(outs) == 3):
-                raise RuntimeError(f"Expected outs=(cls_scores,bbox_preds,dir_cls_preds), got {type(outs)} with len={len(outs) if isinstance(outs,(tuple,list)) else 'n/a'}")
+    def loss(self,
+         cls_scores,
+         bbox_preds,
+         dir_cls_preds,
+         batch_data_samples,
+         **kwargs):
 
-            cls_scores, bbox_preds, dir_cls_preds = outs
+        # 1) standard losses
+        base_loss = super().loss(
+            cls_scores, bbox_preds, dir_cls_preds,
+            batch_data_samples=batch_data_samples, **kwargs
+        )
 
-            # cls_scores, bbox_preds, dir_cls_preds, pp_params, batch_data_samples, k = \
-            #     self._unwrap_outs(outs)
-            
-
-
-            base_loss = super().loss(
-                cls_scores, bbox_preds, dir_cls_preds,
-                batch_data_samples=batch_data_samples, **kwargs
-            )
-
-
+        # 2) post-processing + extra loss if enabled
+        if self.post is not None and self.loss_post is not None:
             featmap_sizes = [t.shape[-2:] for t in cls_scores]
             device = cls_scores[0].device
             anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
             flat_bbox = [self._flat(b) for b in bbox_preds]
-            decoded   = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
-            cls_scores, bbox_preds, dir_cls_preds, pp_params = self.post(
+            decoded = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
+
+            pp_params = self._last_pp_params  # <- from forward()
+            cls_scores_post, bbox_preds_post, dir_cls_post, pp_params_post = self.post(
                 cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
             )
 
-            post_loss = self.loss_post(
-                cls_scores, bbox_preds
-            )
-
+            post_loss = self.loss_post(cls_scores_post, bbox_preds_post)
             if isinstance(post_loss, dict):
-                base_loss.update(post_loss)                 # expects e.g. {"loss_post": tensor}
+                base_loss.update(post_loss)
             else:
-                base_loss['loss_post'] = post_loss          # tensor -> keyed
+                base_loss['loss_post'] = post_loss
 
-            return base_loss
+        return base_loss
+
 
     # inference: same post, then delegate to base predict
     def predict_by_feat(self, *outs, batch_data_samples=None, **kwargs):
