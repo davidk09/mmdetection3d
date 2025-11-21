@@ -95,40 +95,50 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
         
 
-        # training: decode + post, then delegate to base loss
-    def loss(self,
-         cls_scores,
-         bbox_preds,
-         dir_cls_preds,
-         batch_data_samples,
-         **kwargs):
+    #     # training: decode + post, then delegate to base loss
+    # def loss(self,
+    #      cls_scores,
+    #      bbox_preds,
+    #      dir_cls_preds,
+    #      batch_data_samples,
+    #      **kwargs):
 
-        # 1) standard losses
-        base_loss = super().loss(
-            cls_scores, bbox_preds, dir_cls_preds,
-            batch_data_samples=batch_data_samples, **kwargs
-        )
+    #     # 1) standard losses
+    #     base_loss = super().loss(
+    #         cls_scores, bbox_preds, dir_cls_preds,
+    #         batch_data_samples=batch_data_samples, **kwargs
+    #     )
 
-        # 2) post-processing + extra loss if enabled
-        if self.post is not None and self.loss_post is not None:
-            featmap_sizes = [t.shape[-2:] for t in cls_scores]
-            device = cls_scores[0].device
-            anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
-            flat_bbox = [self._flat(b) for b in bbox_preds]
-            decoded = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
+    #     # 2) post-processing + extra loss if enabled
+    #     if self.post is not None and self.loss_post is not None:
+    #         featmap_sizes = [t.shape[-2:] for t in cls_scores]
+    #         device = cls_scores[0].device
+    #         anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
+    #         flat_bbox = [self._flat(b) for b in bbox_preds]
+    #         decoded = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
 
-            pp_params = self._last_pp_params  # <- from forward()
-            cls_scores_post, bbox_preds_post, dir_cls_post, pp_params_post = self.post(
-                cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
-            )
+    #         pp_params = self._last_pp_params  # <- from forward()
+    #         cls_scores_post, bbox_preds_post, dir_cls_post, pp_params_post = self.post(
+    #             cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
+    #         )
 
-            post_loss = self.loss_post(cls_scores_post, bbox_preds_post)
-            if isinstance(post_loss, dict):
-                base_loss.update(post_loss)
-            else:
-                base_loss['loss_post'] = post_loss
+    #         post_loss = self.loss_post(cls_scores_post, bbox_preds_post)
+    #         if isinstance(post_loss, dict):
+    #             base_loss.update(post_loss)
+    #         else:
+    #             base_loss['loss_post'] = post_loss
 
-        return base_loss
+    #     return base_loss
+    
+    def loss(self, x, batch_data_samples, **kwargs):
+        """MMDet3D 1.x-style loss entrypoint.
+
+        Args:
+            x: Tuple of feature maps from the neck.
+            batch_data_samples: list[Det3DDataSample]
+        """
+        # For now, just use the standard Anchor3DHead loss
+        return super().loss(x, batch_data_samples, **kwargs)
 
 
     # inference: same post, then delegate to base predict
