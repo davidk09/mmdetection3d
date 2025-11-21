@@ -3,7 +3,7 @@ import torch.nn as nn
 from mmdet3d.models.dense_heads.anchor3d_head import Anchor3DHead
 from mmdet3d.registry import MODELS
 
-from mmengine.data import InstanceData
+from mmengine.structures import InstanceData
 from mmdet3d.structures.bbox_3d import LiDARInstance3DBoxes
 
 import os
