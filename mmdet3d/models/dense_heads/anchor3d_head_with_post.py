@@ -141,6 +141,53 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         return super().loss(x, batch_data_samples, **kwargs)
 
 
+    def loss_by_feat(self,
+                     cls_scores,
+                     bbox_preds,
+                     dir_cls_preds,
+                     batch_gt_instances_3d,
+                     batch_input_metas,
+                     batch_gt_instances_ignore=None):
+
+        # 1) run the original Anchor3DHead logic to get standard losses
+        base_losses = super().loss_by_feat(
+            cls_scores,
+            bbox_preds,
+            dir_cls_preds,
+            batch_gt_instances_3d,
+            batch_input_metas,
+            batch_gt_instances_ignore=batch_gt_instances_ignore,
+        )
+
+        # 2) compute your extra loss from post-processing
+        extra_losses = {}
+        if self.post is not None and self.loss_post is not None:
+            # get pp_params you computed in forward
+            pp_params = getattr(self, '_last_pp_params', None)
+
+            # (optional) decode boxes like in your predict_by_feat
+            featmap_sizes = [t.shape[-2:] for t in cls_scores]
+            device = cls_scores[0].device
+            # NOTE: in dev-1.x the generator is usually called self.prior_generator
+            anchors = self.prior_generator.grid_anchors(featmap_sizes, device=device)
+            flat_bbox = [b.permute(0, 2, 3, 1).reshape(b.size(0), -1, self.box_code_size)
+                         for b in bbox_preds]
+            decoded   = [self.bbox_coder.decode(a, fb)
+                         for a, fb in zip(anchors, flat_bbox)]
+
+            # run your differentiable post-processing
+            cls_pp, bbox_pp, dir_pp, pp_params_pp = self.post(
+                cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
+            )
+
+            # run your custom loss on these
+            extra_losses = self.loss_post(cls_pp, bbox_pp)
+            # e.g. {'loss_post': tensor(...)}
+
+        # 3) merge base + extra
+        base_losses.update(extra_losses)
+        return base_losses
+
     # inference: same post, then delegate to base predict
     def predict_by_feat(self, *outs, batch_data_samples=None, **kwargs):
         cls_scores, bbox_preds, dir_cls_preds, pp_params = outs
