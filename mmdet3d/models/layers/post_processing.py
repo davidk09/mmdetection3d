@@ -8,25 +8,9 @@ from mmdet.structures.bbox import bbox_overlaps  # differentiable xyxy IoU
 
 @MODELS.register_module()
 class MyPostHead(nn.Module):
-    def __init__(self, nms_pre: int = 0):
+    def __init__(self, nms_pre: int = 200):
         super().__init__()
         self.nms_pre = int(nms_pre)  # 0 = disabled
-
-    # [B, A*C, H, W] -> [B, N, C]
-    @staticmethod
-    def flatten_scores(sc, B, A, C, H, W):
-        return sc.view(B, A, C, H, W).permute(0, 3, 4, 1, 2).reshape(B, H * W * A, C)
-
-    # [B, A*box_dim, H, W] -> [B, N, box_dim]  (kept for completeness; not used here)
-    @staticmethod
-    def flatten_bbox(bx, B, A, box_dim, H, W):
-        return bx.view(B, A, box_dim, H, W).permute(0, 3, 4, 1, 2).reshape(B, H * W * A, box_dim)
-
-    # [B, C*3, H, W] -> [B, H, W, C, 3]
-    @staticmethod
-    def flatten_pp(pp, B, A, C, H, W):
-        # [B, A*C*3, H, W] -> [B, H, W, A, C, 3] -> [B, N, C, 3]
-        return pp.view(B, A, C, 3, H, W).permute(0, 4, 5, 1, 2, 3).reshape(B, H * W * A, C, 3)
 
     # per-class update (your formula)
     @staticmethod
@@ -45,8 +29,8 @@ class MyPostHead(nn.Module):
         self,
         batched_scores:       List[torch.Tensor],  # per level: [B, A*C, H, W]
         batched_bbox_preds:   List[torch.Tensor],  # per level: [B, A*box_dim, H, W]
-        dir_cls:              Optional[List[torch.Tensor]],
-        batched_pp_params:    Optional[List[torch.Tensor]],  # per level: [B, C*3, H, W]
+        dir_cls:              Optional[List[torch.Tensor]], # per level: [B, A*2, H, W]
+        batched_pp_params:    Optional[List[torch.Tensor]],  # per level: [B, A*C*3, H, W]
         batched_decoded:      List[torch.Tensor],            # per level: [B, H*W*A, 7(+...)]
     ) -> Tuple[List[torch.Tensor], List[torch.Tensor],
                Optional[List[torch.Tensor]], Optional[List[torch.Tensor]]]:
@@ -60,56 +44,50 @@ class MyPostHead(nn.Module):
         box_dim = batched_bbox_preds[0].size(1) // A  # not used below
 
         # flatten each level
-        flat_scores, flat_pp = [], []
-        level_sizes = []
-        for sc, pp in zip(batched_scores, batched_pp_params):
+        level_rescores = []
+        level_reboxes = []
+
+        for sc, box, pp in zip(batched_scores,batched_decoded, batched_pp_params):
             B2, _, H, W = sc.shape
-            assert B2 == B
-            level_sizes.append((H, W))
-            sc_f = self.flatten_scores(sc, B, A, C, H, W)            # [B, Nl, C]
-            pp_f = self.flatten_pp(pp, B, A, C, H, W)   # already [B, Nl, C, 3]
-            flat_scores.append(sc_f)
-            flat_pp.append(pp_f)
+            #assert B2 == B
+            #level_sizes.append((H, W))
+            batched_rescores = []
+            batched_reboxes = []
 
-        # concat across levels
-        scores_cat = torch.cat(flat_scores, dim=1)                 # [B, N, C]
-        pp_cat     = torch.cat(flat_pp,     dim=1)                 # [B, N, C, 3]
-        decoded_cat = torch.cat([d[..., :7] for d in batched_decoded], dim=1)  # [B, N, 7]
-        _, N, _ = decoded_cat.shape
+            for b in range(B2):
+                sc_flat = sc[b].view(A,C,H,W).permute(2,3,0,1).reshape(H*W*A,C)
+                box_flat = box[b] #.view(A,box_dim,H,W).permute(2,3,0,1).reshape(H*W*A,box_dim)
+                pp_flat = pp[b].view(A,C,3,H,W).permute(3,4,0,1,2).reshape(H*W*A,C,3)
+                
+                cls_rescores = []
+                cls_reboxes = []
+                for c in range(C):
+                    scores_cls = sc_flat[:,c]
+                    boxes_cls = box_flat
+                    param_cls = pp_flat[:,c]
 
-        # optional pre-filter (nms_pre) to cap N
-        if self.nms_pre > 0 and N > self.nms_pre:
-            # keep top-K by max class prob (per batch)
-            with torch.no_grad():
-                conf = torch.softmax(scores_cat, dim=-1).amax(dim=-1)  # [B, N]
-                topk_vals, topk_idx = torch.topk(conf, k=self.nms_pre, dim=1, sorted=False)
-            # gather
-            batch_idx = torch.arange(B, device=scores_cat.device)[:, None]
-            scores_cat = scores_cat[batch_idx, topk_idx]          # [B, K, C]
-            pp_cat     = pp_cat[batch_idx, topk_idx]              # [B, K, C, 3]
-            decoded_cat= decoded_cat[batch_idx, topk_idx]         # [B, K, 7]
-            N = self.nms_pre
+                    scores_cls_scored = torch.sigmoid(scores_cls)
 
-        # per-batch IoU + explicit per-class loop
-        new_scores = scores_cat.clone()                           # [B, N, C]
-        for b in range(B):
-            boxes = LiDARInstance3DBoxes(decoded_cat[b], box_dim=7)
-            bev   = boxes.nearest_bev                             # [N, 4] xyxy
-            iou   = bbox_overlaps(bev, bev, mode='iou', is_aligned=False)  # [N, N]
-            for c in range(C):
-                cls_vec   = scores_cat[b, :, c]       # read from original scores
-                pp_params = pp_cat[b, :, c, :]        # [N, 3]
-                new_scores[b, :, c] = self.forward_feat_class(cls_vec, iou, pp_params)
+                    _, topk_idx = torch.topk(scores_cls_scored, k=self.nms_pre)
 
-        # un-concat to per-level shapes [B, A*C, H, W]
-        out_scores: List[torch.Tensor] = []
-        offset = 0
-        for (H, W), sc in zip(level_sizes, batched_scores):
-            Nl = H * W * A
-            part = new_scores[:, offset:offset + Nl, :]                     # [B, Nl, C]
-            sc_lvl = part.view(B, H, W, A, C).permute(0, 3, 4, 1, 2).reshape(B, A * C, H, W)
-            out_scores.append(sc_lvl)
-            offset += Nl
+                    scores_survive = scores_cls[topk_idx]
+                    boxes_survive = boxes_cls[topk_idx]
+                    param_survive = param_cls[topk_idx]
 
-        # pass through others unchanged to keep the rest of the pipeline working
-        return out_scores, batched_bbox_preds, dir_cls, batched_pp_params
+                    boxes_lidar = LiDARInstance3DBoxes(boxes_survive, box_dim=box_dim)
+                    bev   = boxes_lidar.nearest_bev
+                    iou   = bbox_overlaps(bev, bev, mode='iou', is_aligned=False)  # [N, N]
+
+                    new_scores = self.forward_feat_class(scores_survive,iou,param_survive)
+                    cls_rescores.append(new_scores)
+                    cls_reboxes.append(boxes_survive)
+
+                batched_rescores.append(cls_rescores)
+                batched_reboxes.append(cls_reboxes)
+
+            level_rescores.append(batched_rescores)
+            level_reboxes.append(batched_reboxes)
+
+        
+
+        return level_rescores,level_reboxes

@@ -93,42 +93,6 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             pass
         logger.info(f"[{where}] batch_data_samples type={type(batch_data_samples)}")
 
-        
-
-    #     # training: decode + post, then delegate to base loss
-    # def loss(self,
-    #      cls_scores,
-    #      bbox_preds,
-    #      dir_cls_preds,
-    #      batch_data_samples,
-    #      **kwargs):
-
-    #     # 1) standard losses
-    #     base_loss = super().loss(
-    #         cls_scores, bbox_preds, dir_cls_preds,
-    #         batch_data_samples=batch_data_samples, **kwargs
-    #     )
-
-    #     # 2) post-processing + extra loss if enabled
-    #     if self.post is not None and self.loss_post is not None:
-    #         featmap_sizes = [t.shape[-2:] for t in cls_scores]
-    #         device = cls_scores[0].device
-    #         anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
-    #         flat_bbox = [self._flat(b) for b in bbox_preds]
-    #         decoded = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
-
-    #         pp_params = self._last_pp_params  # <- from forward()
-    #         cls_scores_post, bbox_preds_post, dir_cls_post, pp_params_post = self.post(
-    #             cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
-    #         )
-
-    #         post_loss = self.loss_post(cls_scores_post, bbox_preds_post)
-    #         if isinstance(post_loss, dict):
-    #             base_loss.update(post_loss)
-    #         else:
-    #             base_loss['loss_post'] = post_loss
-
-    #     return base_loss
     
     def loss(self, x, batch_data_samples, **kwargs):
         """MMDet3D 1.x-style loss entrypoint.
@@ -140,16 +104,15 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         # For now, just use the standard Anchor3DHead loss
         return super().loss(x, batch_data_samples, **kwargs)
 
-
     def loss_by_feat(self,
-                     cls_scores,
-                     bbox_preds,
-                     dir_cls_preds,
-                     batch_gt_instances_3d,
-                     batch_input_metas,
-                     batch_gt_instances_ignore=None):
+                 cls_scores,
+                 bbox_preds,
+                 dir_cls_preds,
+                 batch_gt_instances_3d,
+                 batch_input_metas,
+                 batch_gt_instances_ignore=None):
 
-        # 1) run the original Anchor3DHead logic to get standard losses
+        # 1) original PointPillars losses on raw outputs
         base_losses = super().loss_by_feat(
             cls_scores,
             bbox_preds,
@@ -159,45 +122,51 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             batch_gt_instances_ignore=batch_gt_instances_ignore,
         )
 
-        # 2) compute your extra loss from post-processing
-        extra_losses = {}
+        # 2) our extra loss from post-processed scores
         if self.post is not None and self.loss_post is not None:
-            # get pp_params you computed in forward
             pp_params = getattr(self, '_last_pp_params', None)
 
-            # (optional) decode boxes like in your predict_by_feat
             featmap_sizes = [t.shape[-2:] for t in cls_scores]
             device = cls_scores[0].device
-            # NOTE: in dev-1.x the generator is usually called self.prior_generator
-            anchors = self.prior_generator.grid_anchors(featmap_sizes, device=device)
-            flat_bbox = [b.permute(0, 2, 3, 1).reshape(b.size(0), -1, self.box_code_size)
-                         for b in bbox_preds]
-            decoded   = [self.bbox_coder.decode(a, fb)
-                         for a, fb in zip(anchors, flat_bbox)]
+            anchors = self.prior_generator.grid_anchors(
+                featmap_sizes, device=device)
+            flat_bbox = [b.permute(0, 2, 3, 1).reshape(
+                b.size(0), -1, self.box_code_size) for b in bbox_preds]
+            decoded = [self.bbox_coder.decode(a, fb)
+                    for a, fb in zip(anchors, flat_bbox)]
 
-            # run your differentiable post-processing
-            cls_pp, bbox_pp, dir_pp, pp_params_pp = self.post(
-                cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
+            # post: returns [pp_scores], [pp_boxes] for training
+            pp_scores, pp_boxes = self.post(
+                cls_scores, bbox_preds, dir_cls_preds,
+                pp_params, decoded
             )
 
-            # run your custom loss on these
-            extra_losses = self.loss_post(cls_pp, bbox_pp)
-            # e.g. {'loss_post': tensor(...)}
+            extra_losses = self.loss_post(pp_scores, pp_boxes)
+            base_losses.update(extra_losses)
 
-        # 3) merge base + extra
-        base_losses.update(extra_losses)
         return base_losses
 
+
+
     # inference: same post, then delegate to base predict
-    def predict_by_feat(self, *outs, batch_data_samples=None, **kwargs):
-        cls_scores, bbox_preds, dir_cls_preds, pp_params = outs
+    def predict_by_feat(self,
+                    cls_scores,
+                    bbox_preds,
+                    dir_cls_preds,
+                    batch_data_samples=None,
+                    **kwargs):
+
+        pp_params = getattr(self, '_last_pp_params', None)
 
         if self.post is not None:
             featmap_sizes = [t.shape[-2:] for t in cls_scores]
             device = cls_scores[0].device
-            anchors = self.anchor_generator.grid_anchors(featmap_sizes, device=device)
+            anchors = self.prior_generator.grid_anchors(
+                featmap_sizes, device=device)
             flat_bbox = [self._flat(b) for b in bbox_preds]
-            decoded   = [self.bbox_coder.decode(a, fb) for a, fb in zip(anchors, flat_bbox)]
+            decoded = [self.bbox_coder.decode(a, fb)
+                    for a, fb in zip(anchors, flat_bbox)]
+
             cls_scores, bbox_preds, dir_cls_preds, pp_params = self.post(
                 cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
             )
