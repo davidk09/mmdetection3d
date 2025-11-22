@@ -149,6 +149,10 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             batched_assignments = []
             for b in range(len(batch_gt_instances_3d)):
                 gt_boxes_3d = batch_gt_instances_3d[b].bboxes_3d     # LiDARInstance3DBoxes
+
+                if isinstance(gt_boxes_3d, torch.Tensor):
+                    gt_boxes_3d = LiDARInstance3DBoxes(gt_boxes_3d, box_dim=7)
+
                 gt_labels   = batch_gt_instances_3d[b].labels_3d     # (N_gt,)
                 cls_assignments = []
                 for c in range(len(batched_rescores[0])):
