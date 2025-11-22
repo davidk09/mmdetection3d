@@ -62,8 +62,8 @@ custom_imports = dict(
 model = dict(
     bbox_head=dict(
         type='Anchor3DHeadWithPostPP',
-        post=dict(type='MyPostHead', nms_pre=2048),
-        loss_post=dict(type='MyPostLoss', weight=0.1),
+        post=dict(type='MyPostHead', nms_pre=200),
+        loss_post=dict(type='MyPostLoss', weight=1.0),
         # all other fields inherited from base bbox_head
     )
 )
