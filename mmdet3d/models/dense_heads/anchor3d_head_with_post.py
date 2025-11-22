@@ -5,6 +5,7 @@ from mmdet3d.registry import MODELS
 
 from mmengine.structures import InstanceData
 from mmdet3d.structures.bbox_3d import LiDARInstance3DBoxes
+from mmdet.structures.bbox import bbox_overlaps 
 
 import os
 from mmengine.logging import MMLogger
@@ -18,6 +19,8 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         self.post = MODELS.build(post) if post else None
         self.loss_post = MODELS.build(loss_post) if loss_post else None
         self._last_pp_params = None
+        self.target_assignment_thres = 0.1
+        self.cls_min_iou = {0: 0.5, 1: 0.5, 2: 0.7}
 
 
     def init_weights(self):
@@ -139,12 +142,47 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                     for a, fb in zip(anchors, flat_bbox)]
 
             # post: returns [pp_scores], [pp_boxes] for training
-            pp_scores, pp_boxes = self.post(
+            batched_rescores, batched_reboxes = self.post(
                 cls_scores, bbox_preds, dir_cls_preds,
                 pp_params, decoded
             )
+            batched_assignments = []
+            for b in range(len(batch_gt_instances_3d)):
+                gt_boxes_3d = batch_gt_instances_3d[b].bboxes_3d     # LiDARInstance3DBoxes
+                gt_labels   = batch_gt_instances_3d[b].labels_3d     # (N_gt,)
+                cls_assignments = []
+                for c in range(len(batched_rescores[0])):
+                    scores_cls = batched_rescores[b][c]
+                    boxes_cls = batched_reboxes[b][c]
+                    #do target assignment
+                    gt_mask_c = (gt_labels == c)
 
-            extra_losses = self.loss_post(pp_scores, pp_boxes)
+                    gt_boxes_c = gt_boxes_3d[gt_mask_c]     # LiDARInstance3DBoxes
+                    bev_gt_c   = gt_boxes_c.nearest_bev
+
+                    pred_boxes_c = LiDARInstance3DBoxes(boxes_cls, box_dim=7)
+                    bev_pred_c   = pred_boxes_c.nearest_bev
+
+                    eval_iou = bbox_overlaps(bev_pred_c, bev_gt_c,mode='iou', is_aligned=False)
+
+                    assigned = torch.zeros((len(scores_cls),), dtype=torch.bool, device=scores_cls.device)
+                    for k in range(bev_gt_c.size(0)):
+                        best_match = -1
+                        best_score = float('-inf')
+                        for j, score in enumerate(scores_cls):
+                            if torch.sigmoid(score) < self.target_assignment_thres:
+                                continue
+                            if (not assigned[j].item()) and float(eval_iou[j, k]) > self.cls_min_iou[c] and float(score) > best_score:
+                                best_score = float(score)
+                                best_match = j
+                        if best_match != -1:
+                            assigned[best_match] = True
+                    cls_assignments.append(assigned)
+                    
+
+                batched_assignments.append(cls_assignments)
+
+            extra_losses = self.loss_post(batched_rescores, batched_assignments)
             base_losses.update(extra_losses)
 
         return base_losses
