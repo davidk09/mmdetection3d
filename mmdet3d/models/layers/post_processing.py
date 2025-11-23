@@ -1,6 +1,7 @@
 from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from mmdet3d.registry import MODELS
 from mmdet3d.structures.bbox_3d import LiDARInstance3DBoxes
 from mmdet.structures.bbox import bbox_overlaps  # differentiable xyxy IoU
@@ -22,8 +23,8 @@ class MyPostHead(nn.Module):
         p0 = pp_params_c[:, 0]                     # [N]
         p1 = pp_params_c[:, 1]                     # [N]
         inter = p0[:, None] * p1[None, :]          # [N, N]
-        weight = torch.softmax(iou_mat + inter, dim=1)      # [N, N]
-        return weight @ torch.softmax(cls_scores_vec, dim=0)  # [N]
+        weight = iou_mat +  F.softplus(inter)       # [N, N]
+        return  cls_scores_vec - (weight @ torch.sigmoid(cls_scores_vec))  # [N]
 
     def forward(
         self,

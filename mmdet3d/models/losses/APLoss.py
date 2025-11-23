@@ -30,6 +30,7 @@ class APLoss_Customs(nn.Module):
         tps = torch.tensor(1.0, device=device, dtype=logits.dtype)
 
         for i in torch.where(sorted_targets)[0]:
+            i = i.item() 
             fps = sorted_logits[:i][(~sorted_targets)[:i]] # fps until current tp
             fp_measure = (torch.abs(fps - sorted_logits[i]) + self.eps)**self.gamma
 
@@ -62,14 +63,27 @@ class MyPostLoss(nn.Module):
     def forward(self, batched_scores, batched_assignments):
 
         #loss_val = torch.zeros((), device=batched_scores[0][0].device, dtype=batched_scores[0][0].dtype)
+
+        ref = batched_scores[0][0]
+
         batched_loss = []
         for b, batch in enumerate(batched_scores):
             loss_cls = []
             for c, rescores_cls in enumerate(batch): # per cls lists
                 targets = batched_assignments[b][c].float()
+
+                if torch.sum(targets) == 0:
+                    continue
+
                 loss_bc = self.ap_loss(rescores_cls,targets)
                 loss_cls.append(loss_bc)
-            batched_loss.append(torch.stack(loss_cls).mean())
-                
-        loss_val = torch.stack(batched_loss).mean()
+
+            if loss_cls:
+                batched_loss.append(torch.stack(loss_cls).mean())
+        
+        if batched_loss:
+            loss_val = torch.stack(batched_loss).mean()
+        else:
+            loss_val = ref.sum() * 0.0
+
         return {'loss_post': self.weight * loss_val}
