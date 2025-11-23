@@ -19,11 +19,11 @@ class MyPostHead(nn.Module):
         iou_mat: torch.Tensor,         # [N, N]
         pp_params_c: torch.Tensor      # [N, 3]  (for class c)
     ) -> torch.Tensor:                 # -> [N]
-        p0 = pp_params_c[:, 0]                     # [N]
-        p1 = pp_params_c[:, 1]                     # [N]
-        inter = p0[:, None] * p1[None, :]          # [N, N]
-        weight = torch.softmax(iou_mat + inter, dim=1)      # [N, N]
-        return weight @ torch.softmax(cls_scores_vec, dim=0)  # [N]
+        # p0 = pp_params_c[:, 0]                     # [N]
+        # p1 = pp_params_c[:, 1]                     # [N]
+        # inter = p0[:, None] * p1[None, :]          # [N, N]
+        # weight = torch.softmax(iou_mat + inter, dim=1)      # [N, N]
+        return cls_scores_vec #weight @ torch.softmax(cls_scores_vec, dim=0)  # [N]
 
     def forward(
         self,

@@ -49,30 +49,6 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         # IMPORTANT: keep stock signature (no pp in outputs)
         return cls_scores, bbox_preds, dir_cls_preds
 
-    # helper: (B,C,H,W)->(B,HW,C)
-    def _flat(self, x):
-        return x.permute(0, 2, 3, 1).reshape(x.size(0), -1, x.size(1))
-
-    def _unwrap_outs(self, outs):
-        """Return (cls_scores, bbox_preds, dir_cls_preds, pp_params or None)."""
-        # handle extra one-tuple wrapping
-        if isinstance(outs, (tuple, list)) and len(outs) == 1 and isinstance(outs[0], (tuple, list)):
-            outs = outs[0]
-
-        if not isinstance(outs, (tuple, list)):
-            raise TypeError(f"Head outs must be tuple/list, got {type(outs)}")
-
-        if len(outs) == 4:
-            cls_scores, bbox_preds, dir_cls_preds, pp_params = outs
-        elif len(outs) == 3:
-            cls_scores, bbox_preds, dir_cls_preds = outs
-            pp_params = None
-        else:
-            raise ValueError(f"Unexpected outs length {len(outs)} (expected 3 or 4)")
-
-        return cls_scores, bbox_preds, dir_cls_preds, pp_params 
-
-
     # ---------- DEBUG HELPERS ----------
     @staticmethod
     def _shape_list(tlist):
@@ -128,66 +104,66 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             batch_gt_instances_ignore=batch_gt_instances_ignore,
         )
 
-        # 2) our extra loss from post-processed scores
-        if self.post is not None and self.loss_post is not None:
-            pp_params = getattr(self, '_last_pp_params', None)
+        # # 2) our extra loss from post-processed scores
+        # if self.post is not None and self.loss_post is not None:
+        #     pp_params = getattr(self, '_last_pp_params', None)
 
-            featmap_sizes = [t.shape[-2:] for t in cls_scores]
-            device = cls_scores[0].device
-            anchors = self.prior_generator.grid_anchors(
-                featmap_sizes, device=device)
-            flat_bbox = [b.permute(0, 2, 3, 1).reshape(
-                b.size(0), -1, self.box_code_size) for b in bbox_preds]
-            decoded = [self.bbox_coder.decode(a, fb)
-                    for a, fb in zip(anchors, flat_bbox)]
+        #     featmap_sizes = [t.shape[-2:] for t in cls_scores]
+        #     device = cls_scores[0].device
+        #     anchors = self.prior_generator.grid_anchors(
+        #         featmap_sizes, device=device)
+        #     flat_bbox = [b.permute(0, 2, 3, 1).reshape(
+        #         b.size(0), -1, self.box_code_size) for b in bbox_preds]
+        #     decoded = [self.bbox_coder.decode(a, fb)
+        #             for a, fb in zip(anchors, flat_bbox)]
 
-            # post: returns [pp_scores], [pp_boxes] for training
-            batched_rescores, batched_reboxes = self.post(
-                cls_scores, bbox_preds, dir_cls_preds,
-                pp_params, decoded
-            )
-            batched_assignments = []
-            for b in range(len(batch_gt_instances_3d)):
-                gt_boxes_3d = batch_gt_instances_3d[b].bboxes_3d     # LiDARInstance3DBoxes
+        #     # post: returns [pp_scores], [pp_boxes] for training
+        #     batched_rescores, batched_reboxes = self.post(
+        #         cls_scores, bbox_preds, dir_cls_preds,
+        #         pp_params, decoded
+        #     )
+        #     batched_assignments = []
+        #     for b in range(len(batch_gt_instances_3d)):
+        #         gt_boxes_3d = batch_gt_instances_3d[b].bboxes_3d     # LiDARInstance3DBoxes
 
-                if isinstance(gt_boxes_3d, torch.Tensor):
-                    gt_boxes_3d = LiDARInstance3DBoxes(gt_boxes_3d, box_dim=7)
+        #         if isinstance(gt_boxes_3d, torch.Tensor):
+        #             gt_boxes_3d = LiDARInstance3DBoxes(gt_boxes_3d, box_dim=7)
 
-                gt_labels   = batch_gt_instances_3d[b].labels_3d     # (N_gt,)
-                cls_assignments = []
-                for c in range(len(batched_rescores[0])):
-                    scores_cls = batched_rescores[b][c]
-                    boxes_cls = batched_reboxes[b][c]
-                    #do target assignment
-                    gt_mask_c = (gt_labels == c)
+        #         gt_labels   = batch_gt_instances_3d[b].labels_3d     # (N_gt,)
+        #         cls_assignments = []
+        #         for c in range(len(batched_rescores[0])):
+        #             scores_cls = batched_rescores[b][c]
+        #             boxes_cls = batched_reboxes[b][c]
+        #             #do target assignment
+        #             gt_mask_c = (gt_labels == c)
 
-                    gt_boxes_c = gt_boxes_3d[gt_mask_c]     # LiDARInstance3DBoxes
-                    bev_gt_c   = gt_boxes_c.nearest_bev
+        #             gt_boxes_c = gt_boxes_3d[gt_mask_c]     # LiDARInstance3DBoxes
+        #             bev_gt_c   = gt_boxes_c.nearest_bev
 
-                    pred_boxes_c = LiDARInstance3DBoxes(boxes_cls, box_dim=7)
-                    bev_pred_c   = pred_boxes_c.nearest_bev
+        #             pred_boxes_c = LiDARInstance3DBoxes(boxes_cls, box_dim=7)
+        #             bev_pred_c   = pred_boxes_c.nearest_bev
 
-                    eval_iou = bbox_overlaps(bev_pred_c, bev_gt_c,mode='iou', is_aligned=False)
+        #             eval_iou = bbox_overlaps(bev_pred_c, bev_gt_c,mode='iou', is_aligned=False)
 
-                    assigned = torch.zeros((len(scores_cls),), dtype=torch.bool, device=scores_cls.device)
-                    for k in range(bev_gt_c.size(0)):
-                        best_match = -1
-                        best_score = float('-inf')
-                        for j, score in enumerate(scores_cls):
-                            if torch.sigmoid(score) < self.target_assignment_thres:
-                                continue
-                            if (not assigned[j].item()) and float(eval_iou[j, k]) > self.cls_min_iou[c] and float(score) > best_score:
-                                best_score = float(score)
-                                best_match = j
-                        if best_match != -1:
-                            assigned[best_match] = True
-                    cls_assignments.append(assigned)
+        #             assigned = torch.zeros((len(scores_cls),), dtype=torch.bool, device=scores_cls.device)
+        #             for k in range(bev_gt_c.size(0)):
+        #                 best_match = -1
+        #                 best_score = float('-inf')
+        #                 for j, score in enumerate(scores_cls):
+        #                     if torch.sigmoid(score) < self.target_assignment_thres:
+        #                         continue
+        #                     if (not assigned[j].item()) and float(eval_iou[j, k]) > self.cls_min_iou[c] and float(score) > best_score:
+        #                         best_score = float(score)
+        #                         best_match = j
+        #                 if best_match != -1:
+        #                     assigned[best_match] = True
+        #             cls_assignments.append(assigned)
                     
 
-                batched_assignments.append(cls_assignments)
+        #         batched_assignments.append(cls_assignments)
 
-            extra_losses = self.loss_post(batched_rescores, batched_assignments)
-            base_losses.update(extra_losses)
+        #     extra_losses = self.loss_post(batched_rescores, batched_assignments)
+        #     base_losses.update(extra_losses)
 
         return base_losses
 
