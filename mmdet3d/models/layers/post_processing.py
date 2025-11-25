@@ -35,6 +35,7 @@ class MyPostHead(nn.Module):
         bbox_sup_func_params = pp_params_c[:,2]
         bbox_sup_func_params_feature = pp_params_c[:,3]
 
+        print(f"feat: {bbox_sup_func_params_feature.shape} , param: {bbox_sup_func_params.T.shape}")
 
         model_supp_ma = bbox_sup_func_params_feature @ bbox_sup_func_params.T
 
