@@ -42,8 +42,8 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         self.post = MODELS.build(post) if post else None
         self.loss_post = MODELS.build(loss_post) if loss_post else None
         self._last_pp_params = None
-        self.target_assignment_thres = 0.01
-        self.cls_min_iou =  {0 : 0.1} #{0: 0.5, 1: 0.5, 2: 0.7}
+        self.target_assignment_thres = 0.05
+        self.cls_min_iou =  {0 : 0.6} #{0: 0.5, 1: 0.5, 2: 0.7}
         self.nms_pre=200
 
 
@@ -259,17 +259,17 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                 for k in range(bev_gt_c.size(0)):
                     best_match = -1
                     best_score = float('-inf')
-                    count_away = 0
+                    #count_away = 0
                     for j, score in enumerate(scores_cls):
                         if torch.sigmoid(score) < self.target_assignment_thres:
-                            count_away += 1.0
+                            #count_away += 1.0
                             continue
                         if (not assigned[j].item()) and float(eval_iou[j, k]) > self.cls_min_iou[c] and float(score) > best_score:
                             best_score = float(score)
                             best_match = j
                     if best_match != -1:
                         assigned[best_match] = True
-                    print(f"Of {scores_cls.shape[0]}, {count_away} were not close enough, mean logit: {scores_cls.mean()}, mean score: {torch.sigmoid(scores_cls).mean()}")
+                    #print(f"Of {scores_cls.shape[0]}, {count_away} were not close enough, mean logit: {scores_cls.mean()}, mean score: {torch.sigmoid(scores_cls).mean()}")
                 cls_assignments.append(assigned)
                 
 
