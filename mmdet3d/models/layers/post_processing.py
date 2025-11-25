@@ -26,6 +26,8 @@ class MyPostHead(nn.Module):
         weight = iou_mat +  F.softplus(inter)       # [N, N]
         return  cls_scores_vec - (weight @ torch.sigmoid(cls_scores_vec))  # [N]
 
+    #commit msg
+
     def forward(
     self,
     scores: torch.Tensor,            # [N, C]
