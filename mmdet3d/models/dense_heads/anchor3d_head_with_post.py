@@ -38,12 +38,14 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
     def __init__(self, post=None, loss_post=None, **kwargs):
         super().__init__(**kwargs)
         # add 3 params per class
-        self.conv_pp = nn.Conv2d(self.feat_channels, self.num_anchors * self.num_classes * 3, 1)
+        self.parameter_per_box = 4
+
+        self.conv_pp = nn.Conv2d(self.feat_channels, self.num_anchors * self.num_classes * self.parameter_per_box, 1)
         self.post = MODELS.build(post) if post else None
         self.loss_post = MODELS.build(loss_post) if loss_post else None
         self._last_pp_params = None
-        self.target_assignment_thres = 0.05
-        self.cls_min_iou =  {0 : 0.6} #{0: 0.5, 1: 0.5, 2: 0.7}
+        self.target_assignment_thres = 0.1
+        self.cls_min_iou =  {0 : 0.7} #{0: 0.5, 1: 0.5, 2: 0.7}
         self.nms_pre=200
 
 
@@ -201,7 +203,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
                 cls_score = cls_score.permute(1, 2, 0).reshape(-1, self.num_classes)        
 
-                cls_params = params.permute(1, 2, 0).reshape(-1, self.num_classes, 3)        
+                cls_params = params.permute(1, 2, 0).reshape(-1, self.num_classes, self.parameter_per_box)        
 
                 bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, self.box_code_size)
 
@@ -227,7 +229,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             mlvl_params = torch.cat(mlvl_params)
             cls_rescores, cls_reboxes = self.post(
                     mlvl_scores, lidar_bboxes, 
-                    mlvl_params, self.num_classes
+                    mlvl_params, mlvl_bboxes , self.num_classes
                 )
             batched_rescores.append(cls_rescores)
             batched_reboxes.append(cls_reboxes)
@@ -335,7 +337,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
                 cls_score = cls_score.permute(1, 2, 0).reshape(-1, self.num_classes)        
 
-                cls_params = params.permute(1, 2, 0).reshape(-1, self.num_classes, 3)        
+                cls_params = params.permute(1, 2, 0).reshape(-1, self.num_classes, self.parameter_per_box)        
 
                 bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, self.box_code_size)
 
@@ -361,7 +363,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             mlvl_params = torch.cat(mlvl_params)
             cls_rescores, cls_reboxes = self.post(
                     mlvl_scores, lidar_bboxes, 
-                    mlvl_params, self.num_classes
+                    mlvl_params, mlvl_bboxes ,self.num_classes
                 )
 
 
@@ -372,7 +374,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             for c in range(self.num_classes):
 
                 batch_cls_score = cls_rescores[c]
-                batch_cls_box = mlvl_bboxes
+                batch_cls_box = cls_reboxes[c]
 
                 per_img_scores.append(batch_cls_score)
                 per_img_boxes.append(batch_cls_box)

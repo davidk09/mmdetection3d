@@ -16,23 +16,69 @@ class MyPostHead(nn.Module):
     # per-class update (your formula)
     @staticmethod
     def forward_feat_class(
-        cls_scores_vec: torch.Tensor,  # [N]
-        iou_mat: torch.Tensor,         # [N, N]
+        scores: torch.Tensor,  # [N]
+        bboxes: torch.Tensor,
+        eval_iou: torch.Tensor,         # [N, N]
         pp_params_c: torch.Tensor      # [N, 3]  (for class c)
     ) -> torch.Tensor:                 # -> [N]
-        p0 = pp_params_c[:, 0]                     # [N]
-        p1 = pp_params_c[:, 1]                     # [N]
-        inter = p0[:, None] * p1[None, :]          # [N, N]
-        weight = torch.softmax(iou_mat +  inter,dim=1)       # [N, N]
-        return  cls_scores_vec -  (weight @ torch.sigmoid(cls_scores_vec))  # [N]
+        iou_gate = 0.03
+        gate_steepness = 70.0
+
+        order = torch.argsort(scores, descending=False)
+
+        boxes = boxes[order]
+        scores = scores[order]
+
+        bbox_sup_iou_params = pp_params_c[:,0]
+        bbox_sup_iou_params_feature = pp_params_c[:,1]
+
+        bbox_sup_func_params = pp_params_c[:,2]
+        bbox_sup_func_params_feature = pp_params_c[:,3]
+
+
+        model_supp_ma = bbox_sup_func_params_feature @ bbox_sup_func_params.T
+
+        iou_supp_ma = bbox_sup_iou_params_feature @ bbox_sup_iou_params.T
+
+        supp_ma =   eval_iou * iou_supp_ma + model_supp_ma
+
+        gate = torch.sigmoid((eval_iou - iou_gate) * gate_steepness)
+
+        supp_ma =  F.softplus(supp_ma,beta=0.5) * gate
+
+        mask = torch.triu(torch.ones_like(supp_ma, dtype=torch.bool), diagonal=1)
+
+        supp_ma = supp_ma * mask
+
+        row_logits = scores.unsqueeze(0).expand_as(supp_ma)
+
+        row_logits = torch.sigmoid(row_logits) * gate * mask
+
+        logits = row_logits.masked_fill(~mask, float('-inf'))
+        
+        weights  = row_logits
+        weights = torch.softmax(logits, dim=1)
+
+        weights = torch.cat([weights[:-1], torch.zeros_like(weights[-1:])], dim=0)
+
+        supp_ma = torch.sum(supp_ma * weights, dim=1)
+
+        scores =  scores - supp_ma
+
+        return scores, boxes
+    
+
+    
+
 
     #commit msg
 
     def forward(
     self,
     scores: torch.Tensor,            # [N, C]
-    bbox_preds: LiDARInstance3DBoxes,
+    bbox_lidar: LiDARInstance3DBoxes,
     pp_params: torch.Tensor,         # [N, C, 3]
+    bboxes_pred: torch.Tensor,
     num_classes: int
     ) -> Tuple[List[torch.Tensor], List[LiDARInstance3DBoxes]]:
 
@@ -43,12 +89,12 @@ class MyPostHead(nn.Module):
 
             cls_scores = scores[:,c]
             cls_params = pp_params[:,c]
-            cls_boxes = bbox_preds
+            
         
-            bev   = cls_boxes.nearest_bev
+            bev   = bbox_lidar.nearest_bev
             iou   = bbox_overlaps(bev, bev, mode='iou', is_aligned=False)  # [N, N]
 
-            new_scores = self.forward_feat_class(cls_scores,iou,cls_params)
+            new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred, iou,cls_params)
 
             cls_rescores.append(new_scores)
             cls_reboxes.append(cls_boxes)
