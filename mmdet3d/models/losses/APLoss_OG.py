@@ -111,7 +111,7 @@ class BatchedAPLoss(nn.Module):
     def forward(self, batched_scores, batched_assignments):
 
         device = batched_scores[0][0].device
-        ap_loss = 0.0
+        ap_loss = torch.zeros((), device=device, dtype=dtype)
         ap_loss_cls_sum = torch.zeros(self.n_classes, device=device)
         ap_loss_cls_cnt = torch.zeros(self.n_classes, device=device)
         ap_terms = 0
@@ -131,6 +131,12 @@ class BatchedAPLoss(nn.Module):
 
         if ap_terms == 0:
             print("WARNING: ap_terms = 0, no positive samples, which leads to error in AP-loss backward")
+            # keep ap_loss as 0 *something* tensor, still attached to graph
+            ref = batched_scores[0][0]
+            ap_loss = ref.sum() * 0.0
+        else:
+            ap_loss_cls = ap_loss_cls_sum / ap_loss_cls_cnt.clamp_min(1)
+            ap_loss = ap_loss / ap_terms
             
 
                             
