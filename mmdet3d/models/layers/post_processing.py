@@ -41,6 +41,8 @@ class MyPostHead(nn.Module):
 
         iou_supp_ma = bbox_sup_iou_params_feature @ bbox_sup_iou_params.T
 
+        print(f"model_supp_ma: {model_supp_ma.shape} , iou_supp_ma: {iou_supp_ma.shape}")
+
         supp_ma =   eval_iou * iou_supp_ma + model_supp_ma
 
         gate = torch.sigmoid((eval_iou - iou_gate) * gate_steepness)
