@@ -43,7 +43,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         self.loss_post = MODELS.build(loss_post) if loss_post else None
         self._last_pp_params = None
         self.target_assignment_thres = 0.1
-        self.cls_min_iou = {0: 0.5, 1: 0.5, 2: 0.7}
+        self.cls_min_iou =  {0 : 0.1} #{0: 0.5, 1: 0.5, 2: 0.7}
         self.nms_pre=200
 
 
@@ -269,7 +269,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                             best_match = j
                     if best_match != -1:
                         assigned[best_match] = True
-                    print(f"Of {scores_cls.shape[0]}, {count_away} were not close enough")
+                    print(f"Of {scores_cls.shape[0]}, {count_away} were not close enough, mean logit: {scores_cls.mean()}, mean score: {torch.sigmoid(scores_cls).mean()}")
                 cls_assignments.append(assigned)
                 
 
