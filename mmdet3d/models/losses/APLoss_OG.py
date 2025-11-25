@@ -106,6 +106,7 @@ class BatchedAPLoss(nn.Module):
         super().__init__()
         self.weight = weight
         self.ap_loss = APLoss(delta=1.0)
+        self.n_classes = 1
 
     def forward(self, batched_scores, batched_assignments):
 
