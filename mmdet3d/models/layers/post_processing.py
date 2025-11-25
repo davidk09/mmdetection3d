@@ -23,8 +23,8 @@ class MyPostHead(nn.Module):
         p0 = pp_params_c[:, 0]                     # [N]
         p1 = pp_params_c[:, 1]                     # [N]
         inter = p0[:, None] * p1[None, :]          # [N, N]
-        weight = iou_mat +  F.softplus(inter)       # [N, N]
-        return  cls_scores_vec -  0.0 * (weight @ torch.sigmoid(cls_scores_vec))  # [N]
+        weight = torch.softmax(iou_mat +  inter,dim=1)       # [N, N]
+        return  cls_scores_vec -  (weight @ torch.sigmoid(cls_scores_vec))  # [N]
 
     #commit msg
 
