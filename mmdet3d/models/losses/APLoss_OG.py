@@ -111,6 +111,7 @@ class BatchedAPLoss(nn.Module):
     def forward(self, batched_scores, batched_assignments):
 
         device = batched_scores[0][0].device
+        dtype = batched_scores[0][0].dtype
         ap_loss = torch.zeros((), device=device, dtype=dtype)
         ap_loss_cls_sum = torch.zeros(self.n_classes, device=device)
         ap_loss_cls_cnt = torch.zeros(self.n_classes, device=device)
