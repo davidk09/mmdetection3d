@@ -42,14 +42,14 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         self.post = MODELS.build(post) if post else None
         self.loss_post = MODELS.build(loss_post) if loss_post else None
         self._last_pp_params = None
-        self.target_assignment_thres = 0.1
+        self.target_assignment_thres = 0.01
         self.cls_min_iou =  {0 : 0.1} #{0: 0.5, 1: 0.5, 2: 0.7}
         self.nms_pre=200
 
 
     def init_weights(self):
         super().init_weights()
-        nn.init.normal_(self.conv_pp.weight, mean=0, std=1e-3)
+        nn.init.normal_(self.conv_pp.weight, mean=0, std=1e-7)
         nn.init.constant_(self.conv_pp.bias, 0)
 
     # per level
