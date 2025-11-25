@@ -7,6 +7,8 @@ from mmengine.structures import InstanceData
 from mmdet3d.structures.bbox_3d import LiDARInstance3DBoxes
 from mmdet.structures.bbox import bbox_overlaps 
 from mmdet.models.utils import select_single_mlvl
+from mmdet3d.structures.det3d_data_sample import SampleList
+
 
 import os
 from mmengine.logging import MMLogger
@@ -52,24 +54,19 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
     # per level
     def forward_single(self, x: torch.Tensor):
+        """Per-level forward."""
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
         dir_cls_pred = self.conv_dir_cls(x) if self.use_direction_classifier else None
-        pp_params = self.conv_pp(x)  # [B, C*3, H, W]
+        pp_params = self.conv_pp(x)  # [B, A*C*3, H, W]
         return cls_score, bbox_pred, dir_cls_pred, pp_params
 
-
     def forward(self, feats):
-        cls_scores, bbox_preds, dir_cls_preds, pp_params = [], [], [], []
-        for f in feats:
-            cs, bp, dp, pp = self.forward_single(f)
-            cls_scores.append(cs)
-            bbox_preds.append(bp)
-            dir_cls_preds.append(dp)
-            pp_params.append(pp)
-        self._last_pp_params = pp_params
-        # IMPORTANT: keep stock signature (no pp in outputs)
-        return cls_scores, bbox_preds, dir_cls_preds
+        """Now returns 4 lists (over FPN levels)."""
+        cls_scores, bbox_preds, dir_cls_preds, pp_params = multi_apply(
+            self.forward_single, feats
+        )
+        return cls_scores, bbox_preds, dir_cls_preds, pp_params
 
     # ---------- DEBUG HELPERS ----------
     @staticmethod
@@ -98,21 +95,44 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         logger.info(f"[{where}] batch_data_samples type={type(batch_data_samples)}")
 
     
-    def loss(self, x, batch_data_samples, **kwargs):
-        """MMDet3D 1.x-style loss entrypoint.
+    def loss(self, x: Tuple[Tensor], batch_data_samples: SampleList, **kwargs):
+        """Entry point used by the Runner."""
+        cls_scores, bbox_preds, dir_cls_preds, pp_params = self(x)
 
-        Args:
-            x: Tuple of feature maps from the neck.
-            batch_data_samples: list[Det3DDataSample]
-        """
-        # For now, just use the standard Anchor3DHead loss
-        return super().loss(x, batch_data_samples, **kwargs)
+        batch_gt_instances_3d = []
+        batch_gt_instances_ignore = []
+        batch_input_metas = []
+        for data_sample in batch_data_samples:
+            batch_input_metas.append(data_sample.metainfo)
+            batch_gt_instances_3d.append(data_sample.gt_instances_3d)
+            batch_gt_instances_ignore.append(
+                data_sample.get('ignored_instances', None)
+            )
+
+        # -> NOTE: pass pp_params to our custom loss_by_feat
+        loss_inputs = (cls_scores, bbox_preds, dir_cls_preds, pp_params,
+                       batch_gt_instances_3d, batch_input_metas,
+                       batch_gt_instances_ignore)
+        losses = self.loss_by_feat(*loss_inputs)
+        return losses
+
+
+    # def loss(self, x, batch_data_samples, **kwargs):
+    #     """MMDet3D 1.x-style loss entrypoint.
+
+    #     Args:
+    #         x: Tuple of feature maps from the neck.
+    #         batch_data_samples: list[Det3DDataSample]
+    #     """
+    #     # For now, just use the standard Anchor3DHead loss
+    #     return super().loss(x, batch_data_samples, **kwargs)
 
     def loss_by_feat(
         self,
         cls_scores: List[Tensor],
         bbox_preds: List[Tensor],
         dir_cls_preds: List[Tensor],
+        pp_params: List[Tensor],
         batch_gt_instances_3d: InstanceList,
         batch_input_metas: List[dict],
         batch_gt_instances_ignore: OptInstanceList = None) -> dict:
@@ -153,188 +173,224 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             batch_gt_instances_ignore=batch_gt_instances_ignore,
         )
 
-        # 2) our extra loss from post-processed scores
-        if self.post is not None and self.loss_post is not None:
-            pp_params = getattr(self, '_last_pp_params', None)
 
-            # featmap_sizes = [t.shape[-2:] for t in cls_scores]
-            # device = cls_scores[0].device
-            # anchors = self.prior_generator.grid_anchors(
-            #     featmap_sizes, device=device)
-            # flat_bbox = [b.permute(0, 2, 3, 1).reshape(
-            #     b.size(0), -1, self.box_code_size) for b in bbox_preds]
-            # decoded = [self.bbox_coder.decode(a, fb)
-            #         for a, fb in zip(anchors, flat_bbox)]
+        num_levels = len(cls_scores)
+        featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
+        mlvl_priors = self.prior_generator.grid_anchors(
+            featmap_sizes, device=cls_scores[0].device)
+        mlvl_priors = [
+            prior.reshape(-1, self.box_code_size) for prior in mlvl_priors
+        ]
 
-            # # post: returns [pp_scores], [pp_boxes] for training
-            # batched_rescores, batched_reboxes = self.post(
-            #     cls_scores, bbox_preds, dir_cls_preds,
-            #     pp_params, decoded
-            # )
+        batched_rescores, batched_reboxes = [], []
 
-            num_levels = len(cls_scores)
-            featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
-            mlvl_priors = self.prior_generator.grid_anchors(
-                featmap_sizes, device=cls_scores[0].device)
-            mlvl_priors = [
-                prior.reshape(-1, self.box_code_size) for prior in mlvl_priors
-            ]
-
-            batched_rescores, batched_reboxes = [], []
-
-            for input_id in range(len(batch_input_metas)):
-                input_meta = batch_input_metas[input_id]
-                cls_score_list = select_single_mlvl(cls_scores, input_id)
-                bbox_pred_list = select_single_mlvl(bbox_preds, input_id)
-                dir_cls_pred_list = select_single_mlvl(dir_cls_preds, input_id)
-                lvl_params = select_single_mlvl(pp_params, input_id)
-                mlvl_bboxes = []
-                mlvl_scores = []
-                mlvl_dir_scores = []
-                mlvl_params = []
-                for cls_score, bbox_pred, dir_cls_pred, priors, params in zip(
-                cls_score_list, bbox_pred_list,
-                mlvl_priors,mlvl_params):
-                    dir_cls_pred = dir_cls_pred.permute(1, 2, 0).reshape(-1, 2)
-
-                    cls_score = cls_score.permute(1, 2, 0).reshape(-1, self.num_classes)        
-
-                    cls_params = params.permute(1, 2, 0).reshape(-1, self.num_classes, 3)        
-
-                    bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, self.box_code_size)
-
-                    if  cls_scores.shape[0] > self.nms_pre:
-                        max_scores, _ = cls_scores.max(dim=1)
-                        _, topk_inds = max_scores.topk(self.nms_pre)
-                        priors = priors[topk_inds, :]
-                        bbox_pred = bbox_pred[topk_inds, :]
-                        cls_scores = cls_scores[topk_inds, :]
-                        cls_params = cls_params[topk_inds, :]
-
-
-                    bboxes = self.bbox_coder.decode(priors, bbox_pred)
-
-                    mlvl_bboxes.append(bboxes)
-                    mlvl_scores.append(cls_scores)
-                    mlvl_params.append(cls_params)
+        for input_id in range(len(batch_input_metas)):
+            input_meta = batch_input_metas[input_id]
+            cls_score_list = select_single_mlvl(cls_scores, input_id)
+            bbox_pred_list = select_single_mlvl(bbox_preds, input_id)
+            pp_params_list = select_single_mlvl(pp_params, input_id)
+            mlvl_bboxes = []
+            mlvl_scores = []
+            
+            mlvl_params = []
+            for cls_score, bbox_pred, priors, params in zip(
+            cls_score_list, bbox_pred_list,
+            mlvl_priors,pp_params_list):
+                assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
                 
-                mlvl_bboxes = torch.cat(mlvl_bboxes)
-                lidar_bboxes = input_meta['box_type_3d'](mlvl_bboxes, box_dim=self.box_code_size)
-                mlvl_scores = torch.cat(mlvl_scores)
-                mlvl_dir_scores = torch.cat(mlvl_dir_scores)
-                mlvl_params = torch.cat(mlvl_params)
-                cls_rescores, cls_reboxes = self.post(
-                        mlvl_scores, lidar_bboxes, mlvl_dir_scores,
-                        mlvl_params, self.num_classes
-                    )
-                batched_rescores.append(cls_rescores)
-                batched_reboxes.append(cls_reboxes)
+
+                cls_score = cls_score.permute(1, 2, 0).reshape(-1, self.num_classes)        
+
+                cls_params = params.permute(1, 2, 0).reshape(-1, self.num_classes, 3)        
+
+                bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, self.box_code_size)
+
+                if  cls_score.shape[0] > self.nms_pre:
+                    max_scores, _ = cls_score.max(dim=1)
+                    _, topk_inds = max_scores.topk(self.nms_pre)
+                    priors = priors[topk_inds, :]
+                    bbox_pred = bbox_pred[topk_inds, :]
+                    cls_score = cls_score[topk_inds, :]
+                    cls_params = cls_params[topk_inds, :]
 
 
-            batched_assignments = []
-            for b in range(len(batch_gt_instances_3d)):
+                bboxes = self.bbox_coder.decode(priors, bbox_pred)
+
+                mlvl_bboxes.append(bboxes)
+                mlvl_scores.append(cls_score)
+                mlvl_params.append(cls_params)
+            
+            mlvl_bboxes = torch.cat(mlvl_bboxes)
+            lidar_bboxes = input_meta['box_type_3d'](mlvl_bboxes, box_dim=self.box_code_size)
+            mlvl_scores = torch.cat(mlvl_scores)
+            #mlvl_dir_scores = torch.cat(mlvl_dir_scores)
+            mlvl_params = torch.cat(mlvl_params)
+            cls_rescores, cls_reboxes = self.post(
+                    mlvl_scores, lidar_bboxes, 
+                    mlvl_params, self.num_classes
+                )
+            batched_rescores.append(cls_rescores)
+            batched_reboxes.append(cls_reboxes)
+
+
+        batched_assignments = []
+        for b in range(len(batch_gt_instances_3d)):
+            
+            gt_labels   = batch_gt_instances_3d[b].labels_3d     # (N_gt,)
+            cls_assignments = []
+            for c in range(len(batched_rescores[0])):
+                scores_cls = batched_rescores[b][c]
+                boxes_cls = batched_reboxes[b][c]
+                #do target assignment
+                gt_mask_c = (gt_labels == c)
+
+                gt_boxes_3d = batch_gt_instances_3d[b].bboxes_3d[gt_mask_c]     # LiDARInstance3DBoxes
+
+                if isinstance(gt_boxes_3d, torch.Tensor):
+                    gt_boxes_3d = LiDARInstance3DBoxes(gt_boxes_3d, box_dim=gt_boxes_3d.shape[-1])
+
+                bev_gt_c   = gt_boxes_3d.nearest_bev     # GT input format to bboxes should be correct, see anchor target assign pipeli
+
+                bev_pred_c   = boxes_cls.nearest_bev
+
+                eval_iou = bbox_overlaps(bev_pred_c, bev_gt_c,mode='iou', is_aligned=False)
+
+                assigned = torch.zeros((len(scores_cls),), dtype=torch.bool, device=scores_cls.device)
+                for k in range(bev_gt_c.size(0)):
+                    best_match = -1
+                    best_score = float('-inf')
+                    count_away = 0
+                    for j, score in enumerate(scores_cls):
+                        if torch.sigmoid(score) < self.target_assignment_thres:
+                            count_away += 1.0
+                            continue
+                        if (not assigned[j].item()) and float(eval_iou[j, k]) > self.cls_min_iou[c] and float(score) > best_score:
+                            best_score = float(score)
+                            best_match = j
+                    if best_match != -1:
+                        assigned[best_match] = True
+                    print(f"Of {scores_cls.shape[0]}, {count_away} were not close enough")
+                cls_assignments.append(assigned)
                 
-                gt_labels   = batch_gt_instances_3d[b].labels_3d     # (N_gt,)
-                cls_assignments = []
-                for c in range(len(batched_rescores[0])):
-                    scores_cls = batched_rescores[b][c]
-                    boxes_cls = batched_reboxes[b][c]
-                    #do target assignment
-                    gt_mask_c = (gt_labels == c)
 
-                    gt_boxes_3d = batch_gt_instances_3d[b].bboxes_3d[gt_mask_c]     # LiDARInstance3DBoxes
+            batched_assignments.append(cls_assignments)
 
-                    if isinstance(gt_boxes_3d, torch.Tensor):
-                        gt_boxes_3d = LiDARInstance3DBoxes(gt_boxes_3d, box_dim=gt_boxes_3d.shape[-1])
-
-                    bev_gt_c   = gt_boxes_3d.nearest_bev     # GT input format to bboxes should be correct, see anchor target assign pipeli
-
-                    pred_boxes_c = LiDARInstance3DBoxes(boxes_cls, box_dim=boxes_cls.shape[-1])
-                    bev_pred_c   = pred_boxes_c.nearest_bev
-
-                    eval_iou = bbox_overlaps(bev_pred_c, bev_gt_c,mode='iou', is_aligned=False)
-
-                    assigned = torch.zeros((len(scores_cls),), dtype=torch.bool, device=scores_cls.device)
-                    for k in range(bev_gt_c.size(0)):
-                        best_match = -1
-                        best_score = float('-inf')
-                        count_away = 0
-                        for j, score in enumerate(scores_cls):
-                            if torch.sigmoid(score) < self.target_assignment_thres:
-                                count_away += 1.0
-                                continue
-                            if (not assigned[j].item()) and float(eval_iou[j, k]) > self.cls_min_iou[c] and float(score) > best_score:
-                                best_score = float(score)
-                                best_match = j
-                        if best_match != -1:
-                            assigned[best_match] = True
-                        print(f"Of {scores_cls.shape[0]}, {count_away} were not close enough")
-                    cls_assignments.append(assigned)
-                    
-
-                batched_assignments.append(cls_assignments)
-
-            extra_losses = self.loss_post(batched_rescores, batched_assignments)
-            base_losses.update(extra_losses)
+        extra_losses = self.loss_post(batched_rescores, batched_assignments)
+        base_losses.update(extra_losses)
 
         return base_losses
 
 
+    def predict(self,
+                x: Tuple[Tensor],
+                batch_data_samples: SampleList,
+                rescale: bool = False) -> InstanceList:
+        batch_input_metas = [
+            data_samples.metainfo for data_samples in batch_data_samples
+        ]
+        cls_scores, bbox_preds, dir_cls_preds, pp_params = self(x)
+        predictions = self.predict_by_feat(
+            cls_scores, bbox_preds, dir_cls_preds, pp_params,
+            batch_input_metas=batch_input_metas, rescale=rescale)
+        return predictions
 
-    # inference: same post, then delegate to base predict
+
+
+# inference: same post, then delegate to base predict
     def predict_by_feat(self,
                     cls_scores,
                     bbox_preds,
                     dir_cls_preds,
-                    batch_data_samples=None,
+                    pp_params,   # <--- new
+                    batch_input_metas=None,
+                    cfg=None,
+                    rescale: bool = False,
                     **kwargs):
 
-        pp_params = getattr(self, '_last_pp_params', None)
 
-        if self.post is not None:
-            featmap_sizes = [t.shape[-2:] for t in cls_scores]
-            device = cls_scores[0].device
-            anchors = self.prior_generator.grid_anchors(
-                featmap_sizes, device=device)
-            flat_bbox = [b.permute(0, 2, 3, 1)
-               .reshape(b.size(0), -1, self.box_code_size)
-             for b in bbox_preds]
-            decoded = [self.bbox_coder.decode(a, fb)
-                    for a, fb in zip(anchors, flat_bbox)]
+        num_levels = len(cls_scores)
+        featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
+        mlvl_priors = self.prior_generator.grid_anchors(
+            featmap_sizes, device=cls_scores[0].device)
+        mlvl_priors = [
+            prior.reshape(-1, self.box_code_size) for prior in mlvl_priors
+        ]
 
-            batched_scores, batched_boxes = self.post(
-                cls_scores, bbox_preds, dir_cls_preds, pp_params, decoded
-            )
+        final_dicts = []
 
-            C = len(batched_scores[0])
-
-            final_dicts = []
-
-            for b in range(len(batched_scores)):
-                
-                per_img_scores = []
-                per_img_boxes = []
-                per_img_labels = []
-
-                for c in range(C):
-
-                    batch_cls_score = batched_scores[b][c]
-                    batch_cls_box = batched_boxes[b][c]
-
-                    per_img_scores.append(batch_cls_score)
-                    per_img_boxes.append(batch_cls_box)
-                    per_img_labels.append(torch.full((batch_cls_score.numel(),), c, dtype=torch.long, device=batch_cls_score.device))
+        for input_id in range(len(batch_input_metas)):
+            input_meta = batch_input_metas[input_id]
+            cls_score_list = select_single_mlvl(cls_scores, input_id)
+            bbox_pred_list = select_single_mlvl(bbox_preds, input_id)
+            pp_params_list = select_single_mlvl(pp_params, input_id)
+            mlvl_bboxes = []
+            mlvl_scores = []
+            mlvl_params = []
+            for cls_score, bbox_pred, priors, params in zip(
+            cls_score_list, bbox_pred_list,
+            mlvl_priors,pp_params_list):
+                assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
 
 
-                scores_3d = torch.cat(per_img_scores, dim=0)
-                boxes_3d  = torch.cat(per_img_boxes,  dim=0)
-                labels_3d = torch.cat(per_img_labels, dim=0)
 
-                inst = InstanceData()
-                inst.bboxes_3d = LiDARInstance3DBoxes(boxes_3d, box_dim=7)
-                inst.scores_3d = scores_3d
-                inst.labels_3d = labels_3d
-                
-                final_dicts.append(inst)
+                cls_score = cls_score.permute(1, 2, 0).reshape(-1, self.num_classes)        
+
+                cls_params = params.permute(1, 2, 0).reshape(-1, self.num_classes, 3)        
+
+                bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, self.box_code_size)
+
+                if  cls_score.shape[0] > self.nms_pre:
+                    max_scores, _ = cls_score.max(dim=1)
+                    _, topk_inds = max_scores.topk(self.nms_pre)
+                    priors = priors[topk_inds, :]
+                    bbox_pred = bbox_pred[topk_inds, :]
+                    cls_score = cls_score[topk_inds, :]
+                    cls_params = cls_params[topk_inds, :]
+
+
+                bboxes = self.bbox_coder.decode(priors, bbox_pred)
+
+                mlvl_bboxes.append(bboxes)
+                mlvl_scores.append(cls_score)
+                mlvl_params.append(cls_params)
+            
+            mlvl_bboxes = torch.cat(mlvl_bboxes)
+            lidar_bboxes = input_meta['box_type_3d'](mlvl_bboxes, box_dim=self.box_code_size)
+            mlvl_scores = torch.cat(mlvl_scores)
+            #mlvl_dir_scores = torch.cat(mlvl_dir_scores)
+            mlvl_params = torch.cat(mlvl_params)
+            cls_rescores, cls_reboxes = self.post(
+                    mlvl_scores, lidar_bboxes, 
+                    mlvl_params, self.num_classes
+                )
+
+
+            per_img_scores = []
+            per_img_boxes = []
+            per_img_labels = []
+
+            for c in range(self.num_classes):
+
+                batch_cls_score = cls_rescores[c]
+                batch_cls_box = mlvl_bboxes
+
+                per_img_scores.append(batch_cls_score)
+                per_img_boxes.append(batch_cls_box)
+                per_img_labels.append(torch.full((batch_cls_score.numel(),), c, dtype=torch.long, device=batch_cls_score.device))
+
+
+            scores_3d = torch.cat(per_img_scores, dim=0)
+            boxes_3d  = torch.cat(per_img_boxes,  dim=0)
+            labels_3d = torch.cat(per_img_labels, dim=0)
+
+            inst = InstanceData()
+            inst.bboxes_3d = input_meta['box_type_3d'](boxes_3d, box_dim=self.box_code_size)
+            inst.scores_3d = scores_3d
+            inst.labels_3d = labels_3d
+            
+            final_dicts.append(inst)
 
         return final_dicts
+
+
+    

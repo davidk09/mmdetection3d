@@ -27,14 +27,12 @@ class MyPostHead(nn.Module):
         return  cls_scores_vec - (weight @ torch.sigmoid(cls_scores_vec))  # [N]
 
     def forward(
-        self,
-        scores:       List[torch.Tensor],  # per level: [B, A*C, H, W]
-        bbox_preds:   List[torch.Tensor],  # per level: [B, A*box_dim, H, W]
-        dir_cls:              Optional[List[torch.Tensor]], # per level: [B, A*2, H, W]
-        pp_params:    Optional[List[torch.Tensor]],  # per level: [B, A*C*3, H, W]
-        num_classes
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor],
-               Optional[List[torch.Tensor]], Optional[List[torch.Tensor]]]:
+    self,
+    scores: torch.Tensor,            # [N, C]
+    bbox_preds: LiDARInstance3DBoxes,
+    pp_params: torch.Tensor,         # [N, C, 3]
+    num_classes: int
+    ) -> Tuple[List[torch.Tensor], List[LiDARInstance3DBoxes]]:
 
         cls_rescores = []
         cls_reboxes = []
@@ -42,7 +40,7 @@ class MyPostHead(nn.Module):
         for c in range(num_classes):
 
             cls_scores = scores[:,c]
-            cls_params = scores[:,c]
+            cls_params = pp_params[:,c]
             cls_boxes = bbox_preds
         
             bev   = cls_boxes.nearest_bev
