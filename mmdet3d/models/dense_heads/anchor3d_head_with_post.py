@@ -231,6 +231,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                     mlvl_scores, lidar_bboxes, 
                     mlvl_params, mlvl_bboxes , self.num_classes
                 )
+            cls_reboxes = [input_meta['box_type_3d'](boxes, box_dim=self.box_code_size) for boxes in cls_reboxes]
             batched_rescores.append(cls_rescores)
             batched_reboxes.append(cls_reboxes)
 
