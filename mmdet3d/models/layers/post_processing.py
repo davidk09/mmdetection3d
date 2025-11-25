@@ -37,9 +37,9 @@ class MyPostHead(nn.Module):
 
         print(f"feat: {bbox_sup_func_params_feature.shape} , param: {bbox_sup_func_params.T.shape}")
 
-        model_supp_ma = bbox_sup_func_params_feature @ bbox_sup_func_params.T
+        model_supp_ma = torch.outer(bbox_sup_func_params_feature, bbox_sup_func_params)
 
-        iou_supp_ma = bbox_sup_iou_params_feature @ bbox_sup_iou_params.T
+        iou_supp_ma = torch.outer(bbox_sup_iou_params_feature,bbox_sup_iou_params)
 
         print(f"model_supp_ma: {model_supp_ma.shape} , iou_supp_ma: {iou_supp_ma.shape}")
 
