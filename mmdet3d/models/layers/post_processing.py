@@ -17,7 +17,7 @@ class MyPostHead(nn.Module):
     @staticmethod
     def forward_feat_class(
         scores: torch.Tensor,  # [N]
-        bboxes: torch.Tensor,
+        boxes: torch.Tensor,
         eval_iou: torch.Tensor,         # [N, N]
         pp_params_c: torch.Tensor      # [N, 3]  (for class c)
     ) -> torch.Tensor:                 # -> [N]
