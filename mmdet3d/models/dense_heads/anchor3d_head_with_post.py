@@ -388,7 +388,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
             inst = InstanceData()
             inst.bboxes_3d = input_meta['box_type_3d'](boxes_3d, box_dim=self.box_code_size)
-            inst.scores_3d = scores_3d
+            inst.scores_3d = scores_3d.sigmoid()
             inst.labels_3d = labels_3d
             
             final_dicts.append(inst)
