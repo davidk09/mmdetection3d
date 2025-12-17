@@ -103,6 +103,44 @@ class MyPostHead(nn.Module):
         return iou
 
 
+
+
+    @torch.no_grad()
+    def nms_xyxy(self,
+                 boxes: torch.Tensor,   # [N,4] xyxy
+                 scores: torch.Tensor,  # [N]
+                 iou_thr: float,
+                 pre_max_size: Optional[int] = None,
+                 post_max_size: Optional[int] = None) -> torch.Tensor:
+        """Pure PyTorch greedy NMS using self.iou2d. Returns kept indices."""
+        if boxes.numel() == 0:
+            return boxes.new_zeros((0,), dtype=torch.long)
+
+        boxes = boxes[:, :4]
+        order = scores.argsort(descending=True)
+
+        if pre_max_size is not None:
+            order = order[:pre_max_size]
+
+        keep = []
+        while order.numel() > 0:
+            i = order[0]
+            keep.append(i)
+
+            if order.numel() == 1:
+                break
+
+            rest = order[1:]
+            # IoU of the best box vs all remaining boxes: shape [1, M] -> [M]
+            ious = self.iou2d(boxes[i:i+1], boxes[rest]).squeeze(0)
+            order = rest[ious <= iou_thr]
+
+        keep = torch.stack(keep) if len(keep) > 0 else boxes.new_zeros((0,), dtype=torch.long)
+        if post_max_size is not None:
+            keep = keep[:post_max_size]
+        return keep
+
+
     #commit msg
 
     def forward(
@@ -111,8 +149,9 @@ class MyPostHead(nn.Module):
     bbox_lidar: LiDARInstance3DBoxes,
     pp_params: torch.Tensor,         # [N, C, 3]
     bboxes_pred: torch.Tensor,
-    num_classes: int
-    ) -> Tuple[List[torch.Tensor], List[LiDARInstance3DBoxes]]:
+    num_classes: int,
+    predict
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
 
         cls_rescores = []
         cls_reboxes = []
@@ -121,11 +160,24 @@ class MyPostHead(nn.Module):
 
             cls_scores = scores[:,c]
             cls_params = pp_params[:,c]
-            
-            
-            iou = self.iou2d(bbox_lidar, bbox_lidar)  # [N, N]
 
-            new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred, iou,cls_params)
+
+            if predict:
+                boxes_xyxy = bbox_lidar[:, :4]
+                keep = self.nms_xyxy(
+                    boxes=boxes_xyxy,
+                    scores=cls_scores,
+                    iou_thr=0.5,                    # set your threshold here
+                    pre_max_size=self.nms_pre if self.nms_pre > 0 else None,
+                    post_max_size=None
+                )
+                new_scores = cls_scores[keep]
+                cls_boxes = bboxes_pred[keep]
+
+            else:
+                iou = self.iou2d(bbox_lidar, bbox_lidar)  # [N, N]
+
+                new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred, iou,cls_params)
 
             cls_rescores.append(new_scores)
             cls_reboxes.append(cls_boxes)

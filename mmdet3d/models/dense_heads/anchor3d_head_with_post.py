@@ -290,7 +290,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
             cls_rescores, cls_reboxes = self.post(
                     mlvl_scores, mlvl_bboxes_for_nms, 
-                    mlvl_params, mlvl_bboxes , self.num_classes
+                    mlvl_params, mlvl_bboxes , self.num_classes, predict=False
                 )
             cls_reboxes = [input_meta['box_type_3d'](boxes, box_dim=self.box_code_size) for boxes in cls_reboxes]
             batched_rescores.append(cls_rescores)
@@ -443,7 +443,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
             cls_rescores, cls_reboxes = self.post(
                     mlvl_scores, mlvl_bboxes_for_nms, 
-                    mlvl_params, mlvl_bboxes , self.num_classes
+                    mlvl_params, mlvl_bboxes , self.num_classes, predict=True
                 )
 
 
