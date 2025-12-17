@@ -118,7 +118,7 @@ class MyPostHead(nn.Module):
             cls_scores = scores[:,c]
             cls_params = pp_params[:,c]
             
-        
+            print(bbox_lidar.shape)
             
             iou   = self.iou2d(bbox_lidar, bbox_lidar)  # [N, N]
 
