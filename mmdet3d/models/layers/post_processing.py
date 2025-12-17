@@ -72,6 +72,31 @@ class MyPostHead(nn.Module):
     
 
     
+    def iou2d(bboxes1, bboxes2, metric=0):
+        '''
+        bboxes1: (n, 4), (x1, y1, x2, y2)
+        bboxes2: (m, 4), (x1, y1, x2, y2)
+        return: (n, m)
+        '''
+        bboxes_x1 = torch.maximum(bboxes1[:, 0][:, None], bboxes2[:, 0][None, :]) # (n, m)
+        bboxes_y1 = torch.maximum(bboxes1[:, 1][:, None], bboxes2[:, 1][None, :]) # (n, m)
+        bboxes_x2 = torch.minimum(bboxes1[:, 2][:, None], bboxes2[:, 2][None, :])
+        bboxes_y2 = torch.minimum(bboxes1[:, 3][:, None], bboxes2[:, 3][None, :])
+
+        bboxes_w = torch.clamp(bboxes_x2 - bboxes_x1, min=0)
+        bboxes_h = torch.clamp(bboxes_y2 - bboxes_y1, min=0)
+
+        iou_area = bboxes_w * bboxes_h # (n, m)
+        
+        bboxes1_wh = bboxes1[:, 2:] - bboxes1[:, :2]
+        area1 = bboxes1_wh[:, 0] * bboxes1_wh[:, 1] # (n, )
+        bboxes2_wh = bboxes2[:, 2:] - bboxes2[:, :2]
+        area2 = bboxes2_wh[:, 0] * bboxes2_wh[:, 1] # (m, )
+        if metric == 0:
+            iou = iou_area / (area1[:, None] + area2[None, :] - iou_area + 1e-8)
+        elif metric == 1:
+            iou = iou_area / (area1[:, None] + 1e-8)
+        return iou
 
 
     #commit msg
@@ -94,8 +119,8 @@ class MyPostHead(nn.Module):
             cls_params = pp_params[:,c]
             
         
-            bev   = bbox_lidar.bev
-            iou   = bbox_overlaps(bev, bev, mode='iou', is_aligned=False)  # [N, N]
+            
+            iou   = self.iou2d(bbox_lidar, bbox_lidar)  # [N, N]
 
             new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred, iou,cls_params)
 

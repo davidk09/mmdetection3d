@@ -135,6 +135,33 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
     #     # For now, just use the standard Anchor3DHead loss
     #     return super().loss(x, batch_data_samples, **kwargs)
 
+    def iou2d(bboxes1, bboxes2, metric=0):
+        '''
+        bboxes1: (n, 4), (x1, y1, x2, y2)
+        bboxes2: (m, 4), (x1, y1, x2, y2)
+        return: (n, m)
+        '''
+        bboxes_x1 = torch.maximum(bboxes1[:, 0][:, None], bboxes2[:, 0][None, :]) # (n, m)
+        bboxes_y1 = torch.maximum(bboxes1[:, 1][:, None], bboxes2[:, 1][None, :]) # (n, m)
+        bboxes_x2 = torch.minimum(bboxes1[:, 2][:, None], bboxes2[:, 2][None, :])
+        bboxes_y2 = torch.minimum(bboxes1[:, 3][:, None], bboxes2[:, 3][None, :])
+
+        bboxes_w = torch.clamp(bboxes_x2 - bboxes_x1, min=0)
+        bboxes_h = torch.clamp(bboxes_y2 - bboxes_y1, min=0)
+
+        iou_area = bboxes_w * bboxes_h # (n, m)
+        
+        bboxes1_wh = bboxes1[:, 2:] - bboxes1[:, :2]
+        area1 = bboxes1_wh[:, 0] * bboxes1_wh[:, 1] # (n, )
+        bboxes2_wh = bboxes2[:, 2:] - bboxes2[:, :2]
+        area2 = bboxes2_wh[:, 0] * bboxes2_wh[:, 1] # (m, )
+        if metric == 0:
+            iou = iou_area / (area1[:, None] + area2[None, :] - iou_area + 1e-8)
+        elif metric == 1:
+            iou = iou_area / (area1[:, None] + 1e-8)
+        return iou
+
+
     def loss_by_feat(
         self,
         cls_scores: List[Tensor],
@@ -227,7 +254,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                     priors = priors[topk_inds, :]
                     bbox_pred = bbox_pred[topk_inds, :]
                     cls_score = cls_score[topk_inds, :]
-                    dir_cls_score = dir_cls_score[topk_inds, :]
+                    dir_cls_score = dir_cls_score[topk_inds]
                     cls_params = cls_params[topk_inds, :]
 
 
@@ -250,15 +277,14 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
             lidar_bboxes = input_meta['box_type_3d'](mlvl_bboxes, box_dim=self.box_code_size)
             
-            # mlvl_bboxes_for_nms = xywhr2xyxyr(input_meta['box_type_3d'](
-            # mlvl_bboxes, box_dim=self.box_code_size).bev)
+            mlvl_bboxes_for_nms = xywhr2xyxyr(input_meta['box_type_3d'](
+            mlvl_bboxes, box_dim=self.box_code_size).bev)
 
-            #everything up until here mostly follows from Base3DDenseHead precdict_by_feat
-            
-
+            #everything up until here mostly follows from Base3DDenseHead predict_by_feat
+        
 
             cls_rescores, cls_reboxes = self.post(
-                    mlvl_scores, lidar_bboxes, 
+                    mlvl_scores, mlvl_bboxes_for_nms, 
                     mlvl_params, mlvl_bboxes , self.num_classes
                 )
             cls_reboxes = [input_meta['box_type_3d'](boxes, box_dim=self.box_code_size) for boxes in cls_reboxes]
@@ -282,11 +308,11 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                 if isinstance(gt_boxes_3d, torch.Tensor):
                     gt_boxes_3d = LiDARInstance3DBoxes(gt_boxes_3d, box_dim=gt_boxes_3d.shape[-1])
 
-                bev_gt_c   = gt_boxes_3d.bev     # GT input format to bboxes should be correct, see anchor target assign pipeli
+                bev_gt_c   = xywhr2xyxyr(gt_boxes_3d.bev)     # GT input format to bboxes should be correct, see anchor target assign pipeline
 
-                bev_pred_c   = boxes_cls.bev
+                bev_pred_c   = xywhr2xyxyr(boxes_cls.bev)
 
-                eval_iou = bbox_overlaps(bev_pred_c, bev_gt_c,mode='iou', is_aligned=False)
+                eval_iou = self.iou2d(bev_pred_c, bev_gt_c)
 
                 assigned = torch.zeros((len(scores_cls),), dtype=torch.bool, device=scores_cls.device)
                 for k in range(bev_gt_c.size(0)):
