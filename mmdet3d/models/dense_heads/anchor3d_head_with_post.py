@@ -386,14 +386,12 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
             input_meta = batch_input_metas[input_id]
             cls_score_list = select_single_mlvl(cls_scores, input_id)
             bbox_pred_list = select_single_mlvl(bbox_preds, input_id)
-            pp_params_list = select_single_mlvl(pp_params, input_id)
             dir_cls_pred_list = select_single_mlvl(dir_cls_preds, input_id)
-            
+            pp_params_list = select_single_mlvl(pp_params, input_id)
             mlvl_bboxes = []
             mlvl_scores = []
             mlvl_dir_scores = []
             mlvl_params = []
-
             for cls_score, bbox_pred, dir_cls_pred, priors, params in zip(
             cls_score_list, bbox_pred_list, dir_cls_pred_list,
             mlvl_priors,pp_params_list):
@@ -414,7 +412,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                     priors = priors[topk_inds, :]
                     bbox_pred = bbox_pred[topk_inds, :]
                     cls_score = cls_score[topk_inds, :]
-                    dir_cls_score = dir_cls_score[topk_inds, :]
+                    dir_cls_score = dir_cls_score[topk_inds]
                     cls_params = cls_params[topk_inds, :]
 
 
@@ -426,11 +424,9 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                 mlvl_dir_scores.append(dir_cls_score)
             
             mlvl_bboxes = torch.cat(mlvl_bboxes)
-            
             mlvl_scores = torch.cat(mlvl_scores)
-            #mlvl_dir_scores = torch.cat(mlvl_dir_scores)
+            mlvl_dir_scores = torch.cat(mlvl_dir_scores)
             mlvl_params = torch.cat(mlvl_params)
-
             dir_rot = limit_period(mlvl_bboxes[..., 6] - self.dir_offset,
                                    self.dir_limit_offset, np.pi)
             mlvl_bboxes[..., 6] = (
@@ -438,10 +434,16 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
                 np.pi * mlvl_dir_scores.to(bboxes.dtype))
 
             lidar_bboxes = input_meta['box_type_3d'](mlvl_bboxes, box_dim=self.box_code_size)
+            
+            mlvl_bboxes_for_nms = xywhr2xyxyr(input_meta['box_type_3d'](
+            mlvl_bboxes, box_dim=self.box_code_size).bev)
+
+            #everything up until here mostly follows from Base3DDenseHead predict_by_feat
+        
 
             cls_rescores, cls_reboxes = self.post(
-                    mlvl_scores, lidar_bboxes, 
-                    mlvl_params, mlvl_bboxes ,self.num_classes
+                    mlvl_scores, mlvl_bboxes_for_nms, 
+                    mlvl_params, mlvl_bboxes , self.num_classes
                 )
 
 
