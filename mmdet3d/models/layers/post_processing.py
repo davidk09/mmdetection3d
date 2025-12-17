@@ -71,7 +71,7 @@ class MyPostHead(nn.Module):
         return scores, boxes
     
 
-    
+    @staticmethod
     def iou2d(bboxes1, bboxes2, metric=0):
         '''
         bboxes1: (n, 4), (x1, y1, x2, y2)
