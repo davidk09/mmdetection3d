@@ -334,7 +334,7 @@ class Base3DDenseHead(BaseModule, metaclass=ABCMeta):
                 priors = priors[topk_inds, :]
                 bbox_pred = bbox_pred[topk_inds, :]
                 scores = scores[topk_inds, :]
-                dir_cls_score = dir_cls_score[topk_inds]
+                dir_cls_score = dir_cls_score[topk_inds, :]
 
             bboxes = self.bbox_coder.decode(priors, bbox_pred)
             mlvl_bboxes.append(bboxes)

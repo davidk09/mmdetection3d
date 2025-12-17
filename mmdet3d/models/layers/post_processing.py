@@ -94,7 +94,7 @@ class MyPostHead(nn.Module):
             cls_params = pp_params[:,c]
             
         
-            bev   = bbox_lidar.nearest_bev
+            bev   = bbox_lidar.bev
             iou   = bbox_overlaps(bev, bev, mode='iou', is_aligned=False)  # [N, N]
 
             new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred, iou,cls_params)
