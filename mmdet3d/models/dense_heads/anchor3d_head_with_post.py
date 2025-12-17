@@ -443,7 +443,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
             cls_rescores, cls_reboxes = self.post(
                     mlvl_scores, mlvl_bboxes_for_nms, 
-                    mlvl_params, mlvl_bboxes , self.num_classes, predict=True
+                    mlvl_params, mlvl_bboxes , self.num_classes, predict=False
                 )
 
 

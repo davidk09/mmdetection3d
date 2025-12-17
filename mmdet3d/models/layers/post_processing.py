@@ -18,7 +18,7 @@ class MyPostHead(nn.Module):
     def forward_feat_class(
         scores: torch.Tensor,  # [N]
         boxes: torch.Tensor,
-        eval_iou: torch.Tensor,         # [N, N]
+        lidar_boxes: torch.Tensor,         # [N, N]
         pp_params_c: torch.Tensor      # [N, 3]  (for class c)
     ) -> torch.Tensor:                 # -> [N]
         iou_gate = 0.03
@@ -28,6 +28,8 @@ class MyPostHead(nn.Module):
 
         boxes = boxes[order]
         scores = scores[order]
+        lidar_boxes = lidar_boxes[order]
+
 
         bbox_sup_iou_params = pp_params_c[:,0]
         bbox_sup_iou_params_feature = pp_params_c[:,1]
@@ -43,6 +45,8 @@ class MyPostHead(nn.Module):
 
         #print(f"model_supp_ma: {model_supp_ma.shape} , iou_supp_ma: {iou_supp_ma.shape}")
 
+        eval_iou = MyPostHead.iou2d(lidar_boxes,lidar_boxes)
+
         supp_ma =   eval_iou * iou_supp_ma + model_supp_ma
 
         gate = torch.sigmoid((eval_iou - iou_gate) * gate_steepness)
@@ -55,12 +59,7 @@ class MyPostHead(nn.Module):
 
         row_logits = scores.unsqueeze(0).expand_as(supp_ma)
 
-        row_logits = torch.sigmoid(row_logits) * gate * mask
-
-        logits = row_logits.masked_fill(~mask, float('-inf'))
-        
-        weights  = row_logits
-        weights = torch.softmax(logits, dim=1)
+        weights = torch.sigmoid(row_logits) * gate * mask
 
         weights = torch.cat([weights[:-1], torch.zeros_like(weights[-1:])], dim=0)
 
@@ -175,9 +174,8 @@ class MyPostHead(nn.Module):
                 cls_boxes = bboxes_pred[keep]
 
             else:
-                iou = self.iou2d(bbox_lidar, bbox_lidar)  # [N, N]
 
-                new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred, iou,cls_params)
+                new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred,bbox_lidar,cls_params)
 
             cls_rescores.append(new_scores)
             cls_reboxes.append(cls_boxes)
