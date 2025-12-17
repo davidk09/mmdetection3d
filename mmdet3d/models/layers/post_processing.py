@@ -123,7 +123,7 @@ class MyPostHead(nn.Module):
             cls_params = pp_params[:,c]
             
             
-            iou   = self.iou2d(bbox_lidar, bbox_lidar)  # [N, N]
+            iou = self.iou2d(bbox_lidar, bbox_lidar)  # [N, N]
 
             new_scores, cls_boxes = self.forward_feat_class(cls_scores,bboxes_pred, iou,cls_params)
 
