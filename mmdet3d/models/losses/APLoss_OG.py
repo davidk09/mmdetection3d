@@ -131,8 +131,8 @@ class BatchedAPLoss(nn.Module):
                 ap_terms += 1
 
         if ap_terms == 0:
+            #avoid error, by computing some gradients for the parameters
             print("WARNING: ap_terms = 0, no positive samples, which leads to error in AP-loss backward")
-            # keep ap_loss as 0 *something* tensor, still attached to graph
             ref = batched_scores[0][0]
             ap_loss = ref.sum() * 0.0
         else:

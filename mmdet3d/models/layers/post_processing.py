@@ -13,7 +13,8 @@ class MyPostHead(nn.Module):
         super().__init__()
         self.nms_pre = int(nms_pre)  # 0 = disabled
 
-    # per-class update (your formula)
+
+    #taken from implementation in old repo
     @staticmethod
     def forward_feat_class(
         scores: torch.Tensor,  # [N]
@@ -160,13 +161,14 @@ class MyPostHead(nn.Module):
             cls_scores = scores[:,c]
             cls_params = pp_params[:,c]
 
-
+            #trying to replicate the pipeline for debugging
             if predict:
                 boxes_xyxy = bbox_lidar[:, :4]
+
                 keep = self.nms_xyxy(
                     boxes=boxes_xyxy,
                     scores=cls_scores,
-                    iou_thr=0.5,                    # set your threshold here
+                    iou_thr=0.5,                    
                     pre_max_size=self.nms_pre if self.nms_pre > 0 else None,
                     post_max_size=None
                 )
