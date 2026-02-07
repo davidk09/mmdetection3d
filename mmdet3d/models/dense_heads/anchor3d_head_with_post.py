@@ -339,7 +339,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
 
             batched_assignments.append(cls_assignments)
 
-        extra_losses = self.loss_post(batched_rescores, batched_assignments)
+        extra_losses = self.loss_post(batched_rescores, batched_assignments,self.num_classes)
         base_losses.update(extra_losses)
 
         return base_losses
