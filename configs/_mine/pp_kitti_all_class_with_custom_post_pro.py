@@ -1,5 +1,5 @@
 # configs/_mine/pp_kitti_car_with_custom_post_pro.py
-_base_ = '../pointpillars/pointpillars_hv_secfpn_8xb6-160e_kitti-3d-car.py'
+_base_ = '../pointpillars/pointpillars_hv_secfpn_8xb6-160e_kitti-3d-3class.py'
 
 custom_imports = dict(
     imports=[
@@ -12,8 +12,9 @@ custom_imports = dict(
 
 model = dict(
     bbox_head=dict(
+        # only override what you must
         type='Anchor3DHeadWithPostPP',
-
+        # your extras
         post=dict(type='MyPostHead', nms_pre=200),
         loss_post=dict(type='BatchedAPLoss', weight=1.0),
     )

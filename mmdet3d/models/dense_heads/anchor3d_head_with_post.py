@@ -46,7 +46,7 @@ class Anchor3DHeadWithPostPP(Anchor3DHead):
         self.loss_post = MODELS.build(loss_post) if loss_post else None
         self._last_pp_params = None
         self.target_assignment_thres = 0.1
-        self.cls_min_iou =  {0 : 0.7} #{0: 0.5, 1: 0.5, 2: 0.7}
+        self.cls_min_iou = {0: 0.5, 1: 0.5, 2: 0.7}
         self.nms_pre=200
 
 
